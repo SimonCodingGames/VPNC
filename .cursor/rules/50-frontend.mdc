@@ -1,0 +1,18 @@
+---
+description: Konventionen für Dashboard, Desktop-UI und geteilte Pakete
+globs: apps/dashboard/**,apps/client-desktop/src/**,packages/**
+alwaysApply: false
+---
+# Frontend-Konventionen
+- SvelteKit mit adapter-static, TypeScript strict, Tailwind.
+- `pnpm lint` und `pnpm check` müssen grün sein.
+- API-Aufrufe nur über den generierten Client in `packages/api-client`, nie
+  handgeschriebene fetch-Aufrufe mit eigenen Typen.
+- Wiederverwendbare Komponenten gehören nach `packages/ui`, damit Dashboard und
+  Desktop-Client sie teilen.
+- Alle Listen sind paginiert und für tausende Einträge ausgelegt (Filter, Suche,
+  Cursor-Paginierung, keine Komplettlisten im Speicher).
+- Hell- und Dunkelmodus, responsive, Tastaturbedienbarkeit.
+- Secrets (Passwörter, Private Keys) nie in Stores, LocalStorage oder URLs;
+  Passwortfelder nach dem Absenden leeren.
+- UI-Texte auf Deutsch, zentral abgelegt, damit später übersetzt werden kann.

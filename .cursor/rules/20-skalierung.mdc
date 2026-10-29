@@ -1,0 +1,24 @@
+---
+description: VPNC Skalierungsregeln, keine festen Obergrenzen
+alwaysApply: true
+---
+# Skalierung
+VPNC darf keine eingebaute Obergrenze für Nodes, Cluster oder Nutzer haben.
+- vpnc-control ist zustandslos und horizontal skalierbar: mehrere Instanzen hinter
+  einem Loadbalancer, gemeinsamer Zustand nur in PostgreSQL. Änderungen werden
+  zwischen Instanzen per Postgres `LISTEN/NOTIFY` verteilt. SQLite ist nur für
+  Einzelinstanz-Installationen zulässig.
+- Jeder Node hält genau einen gRPC-Stream zu irgendeiner Control-Instanz;
+  Reconnect mit Backoff und Jitter, damit nach einem Neustart nicht alle Nodes
+  gleichzeitig anklopfen.
+- Config-Stream überträgt Deltas mit Versionsnummer, Vollabgleich nur beim
+  Verbinden oder bei Versionslücken.
+- Alle Listen-Endpunkte der API sind paginiert (Cursor-basiert).
+- Nodes sind in Regionen gruppiert. Das Backbone ist kein Full-Mesh (wächst
+  quadratisch), sondern regional: Ingress verbindet sich nur mit den Egress-Knoten
+  seiner Region plus konfigurierbaren Fallback-Regionen.
+- IP-Bereiche groß genug planen: Tunnel-IPs aus `100.64.0.0/10` und IPv6-ULA,
+  pro Cluster ein eigener Teilbereich.
+- Lang laufende Vorgänge (Provisioning, Rotation) laufen als Jobs in einer
+  DB-gestützten Job-Queue, die jede Control-Instanz abarbeiten kann
+  (`SELECT ... FOR UPDATE SKIP LOCKED`).

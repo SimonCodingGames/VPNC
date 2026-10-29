@@ -1,0 +1,82 @@
+---
+description: VPNC Projektkontext, Annahmen, Verzeichnisse, Tech-Stack, Arbeitsweise
+alwaysApply: true
+---
+# VPNC – Projektkontext
+
+## Was VPNC ist
+VPNC ist eine selfhosted VPN-Plattform mit Web-Dashboard, Server-Daemon und
+Multi-Protokoll-Client. Es gibt zwei Betriebsarten:
+
+1. **Classic:** WireGuard- und OpenVPN-Profile verbinden direkt zu genau einem
+   Server. Kein Load-Balancing. Kompatibel mit allen Standard-Clients.
+2. **VPNC-Tunnel:** Auf dem Draht reines WireGuard. Das Profil funktioniert in der
+   offiziellen WireGuard-App. Der Endpoint ist ein GeoDNS-Name (später optional
+   Anycast-IP). Alle Ingress-Knoten eines Clusters teilen sich den Server-Key.
+   Ingress leitet über ein WireGuard-Backbone an einen Egress-Pool mit gemeinsamer
+   öffentlicher IP. Load-Balancing pro Flow, nie pro Paket.
+
+Der eigene VPNC-Client ist optionaler Komfort (Latenzmessung, Wahl des besten
+Ingress per Unicast-Endpoint, schnelleres Failover), niemals Voraussetzung.
+
+Lies vor jedem Schritt: `README.md`, `docs/adr/*.md`.
+
+## Feste Annahmen
+- Mehrbenutzerbetrieb mit Rollen `admin` und `user`. User sehen und verwalten nur
+  eigene Geräte und Profile. Admins verwalten alles.
+- Ingress-Auswahl zuerst über GeoDNS; Datenmodell und Code so bauen, dass Anycast
+  später ohne Migration ergänzt werden kann.
+- Datenbank: SQLite für kleine Installationen, PostgreSQL für Produktion. Beide
+  müssen funktionieren (sqlx mit `Any`-Treiber oder sauber getrennte Queries).
+- Automatische Server-Installation zuerst für Debian und Ubuntu, Code offen für
+  weitere Distributionen.
+
+## Tech-Stack (nicht ohne Rückfrage ändern)
+| Bereich | Technologie |
+|---|---|
+| Backend, Server, Client-Core | Rust (stable), Tokio |
+| REST-API | axum, utoipa (OpenAPI) |
+| Interne Kommunikation | gRPC mit tonic/prost, Definitionen in `proto/` |
+| DB | sqlx, Migrationen in `crates/vpnc-control/migrations/` |
+| Config | figment (TOML + Umgebungsvariablen mit Präfix `VPNC_`) |
+| Logging | tracing, tracing-subscriber (JSON in Produktion) |
+| Passwörter | argon2id |
+| SSH-Provisioning | russh (reines Rust, kein Aufruf von `ssh`/`sshpass`) |
+| Live-Logs im Dashboard | Server-Sent Events |
+| Binary-Signaturen | ed25519 (ed25519-dalek) |
+| WireGuard-Keys | x25519-dalek, Base64 wie bei `wg genkey` |
+| Verschlüsselung ruhender Secrets | chacha20poly1305, Master-Key aus `VPNC_MASTER_KEY` |
+| Dashboard | SvelteKit (adapter-static), TypeScript strict, Tailwind |
+| API-Client im Frontend | per openapi-typescript aus der OpenAPI-Spec generiert |
+| Desktop-Client | Tauri v2, UI teilt Komponenten aus `packages/ui` |
+| Paketmanager JS | pnpm Workspaces |
+
+## Verzeichnisse und Zuständigkeiten
+```
+crates/vpnc-common   geteilte Typen, Config, Fehler, Tracing-Setup
+crates/vpnc-control  Control Plane: REST, gRPC-Server, DB, Profilgenerierung
+crates/vpnc-node     Server-Daemon mit Rollen classic / ingress / egress
+crates/vpnc-wg       WireGuard-Clusterlogik: Cluster-Key, Peer-Sync, Peer-Location
+crates/vpnc-core     Client-Core: TunnelBackend-Trait, Backends, Userspace-Router
+apps/dashboard       Web-Dashboard
+apps/client-desktop  Tauri-Client (src-tauri ist Workspace-Mitglied)
+packages/ui          geteilte Svelte-Komponenten
+packages/api-client  generierter TS-API-Client
+proto/               .proto-Dateien (einzige Quelle für gRPC-Typen)
+deploy/              Docker, systemd, Helm
+docs/adr/            Architekturentscheidungen
+```
+Neue Top-Level-Ordner nur nach Rückfrage.
+
+## Arbeitsweise
+- Die Umsetzung folgt `docs/plan/ROADMAP.md`. Setze nur den Schritt um, der in
+  der Anfrage genannt wird. Nichts aus späteren Schritten vorziehen.
+- Vor jedem Schritt `docs/plan/PROGRESS.md` und `docs/adr/` lesen.
+- Nach jedem abgeschlossenen Schritt den Haken in `docs/plan/PROGRESS.md` setzen
+  und kurz notieren, was offen geblieben ist.
+- Wenn eine Entscheidung fehlt oder ein ADR berührt wird: anhalten und fragen.
+- Größere Entscheidungen als neues ADR in `docs/adr/` dokumentieren
+  (fortlaufende Nummer, Status, Kontext, Entscheidung, Konsequenzen).
+- Commit-Nachrichten im Conventional-Commits-Format.
+- Am Ende jedes Schritts: kurze Zusammenfassung, geänderte Dateien, wie man es
+  testet, offene Punkte.

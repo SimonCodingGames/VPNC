@@ -1,0 +1,20 @@
+---
+description: VPNC Sicherheitsregeln
+alwaysApply: true
+---
+# Sicherheitsregeln (immer verbindlich)
+- Keine eigene Kryptografie. Nur etablierte Crates.
+- Private Keys, Passwörter, Tokens niemals loggen, niemals in Fehlermeldungen,
+  niemals in URLs.
+- Server-Private-Keys und Cluster-Keys in der DB nur verschlüsselt speichern.
+- Geräte-Private-Keys werden bevorzugt auf dem Gerät erzeugt. Wenn der Server
+  einen erzeugt (Profil-Download für die Standard-App), wird er genau einmal
+  ausgeliefert und nicht gespeichert.
+- Join-Tokens sind einmalig, laufen ab und werden gehasht gespeichert.
+- Jede schreibende Admin-Aktion erzeugt einen Eintrag in `audit_events`.
+- Remote-Befehle beim Provisioning nur aus festen, im Code hinterlegten
+  Skripten; Benutzereingaben werden nie in Remote-Shell-Befehle eingesetzt,
+  sondern als Datei (Config) hochgeladen.
+- Eingaben an Systemkommandos (ip, nft, openvpn) nie per Shell-String
+  zusammenbauen, sondern als Argumentliste übergeben.
+- Im Zweifel die sicherere Variante wählen und im Ergebnis darauf hinweisen.

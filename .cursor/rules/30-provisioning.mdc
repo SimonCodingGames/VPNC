@@ -1,0 +1,19 @@
+---
+description: Regeln für das Hinzufügen von Servern per SSH aus dem Dashboard
+globs: crates/vpnc-control/src/provisioning/**,crates/vpnc-node/**,apps/dashboard/src/routes/nodes/**
+alwaysApply: false
+---
+# Node-Provisioning
+Admins fügen beliebig viele Server über das Dashboard hinzu: Host/IP, SSH-Port,
+Benutzer, Passwort **oder** SSH-Key, Rollen, Region, optional Cluster.
+- SSH-Passwörter und -Keys existieren nur im Arbeitsspeicher des laufenden Jobs
+  (`zeroize`), werden nie gespeichert, nie geloggt, nie an den Browser
+  zurückgegeben.
+- Host-Key-Fingerprint wird vor der Installation im Dashboard angezeigt und muss
+  bestätigt werden; danach wird er gespeichert.
+- Nach der Installation braucht VPNC keinen SSH-Zugang mehr. Updates und
+  Deinstallation laufen über den Node-Agenten selbst (signierte Binaries).
+- Alternative ohne Passworteingabe: Dashboard zeigt einen Einzeiler mit
+  einmaligem Join-Token zum manuellen Ausführen auf dem Server.
+- Tests müssen aktiv prüfen, dass Passwörter und Keys weder in DB, Logs noch
+  API-Antworten auftauchen.

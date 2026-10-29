@@ -1,0 +1,19 @@
+---
+description: Rust-Konventionen für alle Crates
+globs: **/*.rs,**/Cargo.toml,**/build.rs
+alwaysApply: false
+---
+# Rust-Konventionen
+- `cargo fmt` und `cargo clippy --all-targets -- -D warnings` müssen grün sein.
+- Bibliotheken nutzen `thiserror`, Binaries `anyhow`.
+- Kein `unwrap()`/`expect()` außerhalb von Tests und klar begründeten Startpfaden.
+- Jede öffentliche Funktion in Bibliotheks-Crates hat einen Doc-Kommentar.
+- Abhängigkeiten zentral in `[workspace.dependencies]` pflegen, Crates nutzen
+  `dep.workspace = true`.
+- Async ausschließlich mit Tokio. Keine blockierenden Aufrufe im Async-Kontext
+  (sonst `spawn_blocking`).
+- Secrets immer im `Secret<T>`-Wrapper aus `vpnc-common`, sensible Puffer mit
+  `zeroize`.
+- gRPC-Typen nur aus `proto/` generieren, nie von Hand nachbauen.
+- SQL nur über sqlx mit Parametern, nie per String-Verkettung.
+- Unit-Tests neben dem Code, Integrationstests in `tests/integration/`.
