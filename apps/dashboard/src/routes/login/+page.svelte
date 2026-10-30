@@ -1,5 +1,6 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
+  import { resolve } from '$app/paths';
   import { login } from '$lib/auth';
   import { de } from '$lib/i18n/de';
 
@@ -15,7 +16,7 @@
     try {
       await login(email, password);
       password = '';
-      await goto('/');
+      await goto(resolve('/devices'));
     } catch {
       error = 'Anmeldung fehlgeschlagen';
       password = '';
