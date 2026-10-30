@@ -34,7 +34,9 @@ impl PreflightReport {
 pub fn unsupported_distro(id: &str) -> PreflightReport {
     PreflightReport {
         distro: Some(id.to_string()),
-        issues: vec![format!("unsupported distribution: {id} (supported: debian, ubuntu)")],
+        issues: vec![format!(
+            "unsupported distribution: {id} (supported: debian, ubuntu)"
+        )],
         ..Default::default()
     }
 }

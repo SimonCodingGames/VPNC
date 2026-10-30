@@ -6,10 +6,10 @@ use sha2::{Digest, Sha256};
 /// Computes a SHA256 fingerprint for an OpenSSH host key blob (raw bytes).
 pub fn host_key_fingerprint_sha256(host_key: &[u8]) -> String {
     let digest = Sha256::digest(host_key);
-    format!("SHA256:{}", base64::Engine::encode(
-        &base64::engine::general_purpose::STANDARD_NO_PAD,
-        digest,
-    ))
+    format!(
+        "SHA256:{}",
+        base64::Engine::encode(&base64::engine::general_purpose::STANDARD_NO_PAD, digest,)
+    )
 }
 
 /// Validates that a user-confirmed fingerprint matches the observed key.

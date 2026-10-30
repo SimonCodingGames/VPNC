@@ -3,8 +3,8 @@
 use crate::db::Db;
 use crate::grpc::pb::node::node_service_server::NodeService;
 use crate::grpc::pb::node::{
-    AckConfigRequest, AckConfigResponse, ConfigUpdate, HealthAck, HealthReport,
-    PeerLocationAck, PeerLocationReport, RegisterRequest, RegisterResponse, StreamConfigRequest,
+    AckConfigRequest, AckConfigResponse, ConfigUpdate, HealthAck, HealthReport, PeerLocationAck,
+    PeerLocationReport, RegisterRequest, RegisterResponse, StreamConfigRequest,
 };
 use chrono::{Duration, Utc};
 use sha2::{Digest, Sha256};
@@ -142,7 +142,9 @@ impl NodeService for NodeGrpcService {
 
         // TODO(step-6 follow-up): issue mTLS client cert signed by control CA.
         // For now, return a durable opaque credential (hashed at rest later).
-        let credential = hex::encode(Sha256::digest(format!("{node_id}:{}", req.join_token).as_bytes()));
+        let credential = hex::encode(Sha256::digest(
+            format!("{node_id}:{}", req.join_token).as_bytes(),
+        ));
 
         match &self.db {
             Db::Sqlite(pool) => {
@@ -279,22 +281,22 @@ pub async fn mark_offline_nodes(db: &Db, runtime: &NodeRuntimeState, timeout_sec
     let now = Utc::now().to_rfc3339();
     for id in offline {
         let _ = match db {
-            Db::Sqlite(pool) => sqlx::query(
-                "UPDATE nodes SET status = 'offline', updated_at = ? WHERE id = ?",
-            )
-            .bind(&now)
-            .bind(&id)
-            .execute(pool)
-            .await
-            .map(|_| ()),
-            Db::Postgres(pool) => sqlx::query(
-                "UPDATE nodes SET status = 'offline', updated_at = $1 WHERE id = $2",
-            )
-            .bind(&now)
-            .bind(&id)
-            .execute(pool)
-            .await
-            .map(|_| ()),
+            Db::Sqlite(pool) => {
+                sqlx::query("UPDATE nodes SET status = 'offline', updated_at = ? WHERE id = ?")
+                    .bind(&now)
+                    .bind(&id)
+                    .execute(pool)
+                    .await
+                    .map(|_| ())
+            }
+            Db::Postgres(pool) => {
+                sqlx::query("UPDATE nodes SET status = 'offline', updated_at = $1 WHERE id = $2")
+                    .bind(&now)
+                    .bind(&id)
+                    .execute(pool)
+                    .await
+                    .map(|_| ())
+            }
         };
     }
 }

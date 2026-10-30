@@ -44,7 +44,10 @@ enum Command {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt().with_env_filter("info").try_init().ok();
+    tracing_subscriber::fmt()
+        .with_env_filter("info")
+        .try_init()
+        .ok();
     let cli = Cli::parse();
     match cli.command {
         Some(Command::Run {
@@ -88,7 +91,11 @@ async fn run(control: &str, join_token: &str, name: &str, role: &str) -> anyhow:
             Ok(stream) => {
                 let mut stream = stream.into_inner();
                 while let Some(update) = stream.message().await? {
-                    info!(version = update.version, full = update.full_snapshot, "config update");
+                    info!(
+                        version = update.version,
+                        full = update.full_snapshot,
+                        "config update"
+                    );
                     version = update.version;
                     let _ = client
                         .ack_config(pb::node::AckConfigRequest {

@@ -27,8 +27,7 @@ impl Default for TelemetryConfig {
 /// `tracing_subscriber` if a subscriber is already set; that error is ignored
 /// so tests can call this repeatedly.
 pub fn init_telemetry(config: &TelemetryConfig) {
-    let filter = EnvFilter::try_new(&config.filter)
-        .unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter = EnvFilter::try_new(&config.filter).unwrap_or_else(|_| EnvFilter::new("info"));
 
     let result = if config.json {
         tracing_subscriber::fmt()
