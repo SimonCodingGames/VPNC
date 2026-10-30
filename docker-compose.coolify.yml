@@ -1,0 +1,50 @@
+# Coolify Build Pack: Docker Compose
+# Domain: set SERVICE_FQDN_CONTROL_8080 (Coolify magic) — no HTTP ports published.
+# gRPC 50051 is published so nodes can connect directly (see docs/deploy-coolify.md).
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: vpnc
+      POSTGRES_PASSWORD: ${SERVICE_PASSWORD_POSTGRES:?SERVICE_PASSWORD_POSTGRES fehlt}
+      POSTGRES_DB: vpnc
+    volumes:
+      - vpnc_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vpnc -d vpnc"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  control:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      VPNC_DATABASE_URL: postgres://vpnc:${SERVICE_PASSWORD_POSTGRES}@postgres:5432/vpnc
+      VPNC_HTTP_BIND: 0.0.0.0:8080
+      VPNC_GRPC_BIND: 0.0.0.0:50051
+      # 64 hex chars (32 bytes). Prefer a Coolify secret / manual value.
+      # SERVICE_BASE64_64_* yields ~48 decoded bytes — do NOT use as master key.
+      VPNC_MASTER_KEY: ${VPNC_MASTER_KEY:?VPNC_MASTER_KEY fehlt (openssl rand -hex 32)}
+      VPNC_COOKIE_SECURE: ${VPNC_COOKIE_SECURE:-true}
+      VPNC_TRUST_FORWARDED_HEADERS: ${VPNC_TRUST_FORWARDED_HEADERS:-true}
+      VPNC_SESSION_HOURS: ${VPNC_SESSION_HOURS:-24}
+      VPNC_STATIC_DIR: /app/static
+      VPNC_PUBLIC_URL: ${SERVICE_FQDN_CONTROL_8080:-}
+      VPNC_PUBLIC_GRPC: ${VPNC_PUBLIC_GRPC:-}
+      VPNC_BOOTSTRAP_EMAIL: ${VPNC_BOOTSTRAP_EMAIL:-}
+      VPNC_BOOTSTRAP_PASSWORD: ${VPNC_BOOTSTRAP_PASSWORD:-}
+      VPNC_TELEMETRY__JSON: "true"
+      VPNC_TELEMETRY__FILTER: ${VPNC_TELEMETRY__FILTER:-info}
+    ports:
+      - "50051:50051"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  vpnc_pg_data:

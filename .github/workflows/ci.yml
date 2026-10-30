@@ -54,7 +54,7 @@ jobs:
         run: cargo test --workspace
 
   frontend:
-    name: Frontend (lint, check)
+    name: Frontend (lint, check, build)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -78,3 +78,54 @@ jobs:
 
       - name: Check
         run: pnpm check
+
+      - name: Build
+        run: pnpm --filter @vpnc/dashboard build
+
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t vpnc-control:ci .
+
+  deploy:
+    name: Push GHCR + Coolify webhook
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    needs: [rust, frontend, docker]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to GHCR
+        if: ${{ secrets.GITHUB_TOKEN != '' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        if: ${{ secrets.GITHUB_TOKEN != '' }}
+        run: |
+          IMAGE="ghcr.io/${{ github.repository_owner }}/vpnc-control"
+          IMAGE=$(echo "$IMAGE" | tr '[:upper:]' '[:lower:]')
+          docker build -t "$IMAGE:${{ github.sha }}" -t "$IMAGE:latest" .
+          docker push "$IMAGE:${{ github.sha }}"
+          docker push "$IMAGE:latest"
+
+      - name: Trigger Coolify deploy
+        if: ${{ secrets.COOLIFY_WEBHOOK_URL != '' }}
+        env:
+          COOLIFY_WEBHOOK_URL: ${{ secrets.COOLIFY_WEBHOOK_URL }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+        run: |
+          HDR=()
+          if [ -n "$COOLIFY_TOKEN" ]; then
+            HDR=(-H "Authorization: Bearer $COOLIFY_TOKEN")
+          fi
+          curl -fsS -X POST "${HDR[@]}" "$COOLIFY_WEBHOOK_URL"

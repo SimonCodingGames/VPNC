@@ -1,13 +1,11 @@
 # VPNC – Installationsanleitung
 
 Diese Anleitung bringt eine frische VPNC-Installation von Null bis zum ersten
-WireGuard-Profil. Empfohlen für den Einstieg: **Docker Compose** (Abschnitt 2).
-Für Entwicklung oder Bare-Metal siehe Abschnitt 3 und 4.
+WireGuard-Profil. Empfohlen für den Einstieg: **Docker Compose** (Abschnitt 2)
+oder **Coolify** ([deploy-coolify.md](deploy-coolify.md)).
 
-> **Hinweis zum aktuellen Stand:** Control-Plane (API, Auth, Profile, gRPC) und
-> Dashboard-Login sind vorhanden. Server-Provisioning per SSH, vollständige
-> Verwaltungsseiten und Kernel-WireGuard auf Nodes folgen den nächsten
-> Roadmap-Schritten. Die UI-Vorschaubilder unten zeigen das **Zielbild**.
+Control liefert API **und** Dashboard unter derselben Origin aus (Static-Dateien +
+`/api/*`). Ein separater Reverse-Proxy nur für das Frontend ist nicht nötig.
 
 ---
 
@@ -20,7 +18,7 @@ Für Entwicklung oder Bare-Metal siehe Abschnitt 3 und 4.
 5. [Erster Admin und Login](#5-erster-admin-und-login)
 6. [Server hinzufügen](#6-server-hinzufügen)
 7. [Gerät und WireGuard-Profil](#7-gerät-und-wireguard-profil)
-8. [Dashboard-Vorschau](#8-dashboard-vorschau)
+8. [Dashboard](#8-dashboard)
 9. [Konfiguration und Umgebungsvariablen](#9-konfiguration-und-umgebungsvariablen)
 10. [Update, Backup, Troubleshooting](#10-update-backup-troubleshooting)
 
@@ -32,11 +30,13 @@ Für Entwicklung oder Bare-Metal siehe Abschnitt 3 und 4.
 
 | Komponente | Minimum |
 |---|---|
-| Host-OS | Linux x86_64 oder aarch64 (Debian/Ubuntu empfohlen) |
+| Host-OS | Linux x86_64 (arm64 nice-to-have) |
 | Docker | 24+ mit Compose-Plugin |
 | RAM | 2 GB (Control + Postgres) |
-| Ports | `8080` (HTTP/Dashboard), `50051` (gRPC), `5432` nur intern |
+| Ports | `8080` (HTTP/Dashboard+API), `50051` (gRPC); `5432` nur intern |
 | DNS | Optional GeoDNS für VPNC-Tunnel (siehe [geodns.md](geodns.md)) |
+
+Coolify: siehe [deploy-coolify.md](deploy-coolify.md) (`docker-compose.coolify.yml`).
 
 ### Entwicklung (Windows / macOS / Linux)
 
@@ -71,22 +71,16 @@ openssl rand -hex 32
 ```
 
 In `docker-compose.yml` unter `control.environment.VPNC_MASTER_KEY` einsetzen
-(oder per `.env`-Datei / Compose-Override).
+(oder per `.env`-Datei / Compose-Override). Alternativ Base64 von genau 32 Bytes.
 
 ### 2.3 Stack starten
 
+Das Root-`Dockerfile` baut Dashboard und `vpnc-control` in einem Image.
+
 ```bash
-docker compose up -d postgres control
+docker compose up -d --build postgres control
 docker compose ps
 ```
-
-Warten, bis Postgres healthy und Control läuft:
-
-```bash
-docker compose logs -f control
-```
-
-Erreichbarkeit prüfen:
 
 ```bash
 curl -s http://127.0.0.1:8080/api/health
@@ -95,37 +89,28 @@ curl -s http://127.0.0.1:8080/api/health
 
 ### 2.4 Ersten Admin anlegen
 
+Lokal setzt Compose optional `VPNC_BOOTSTRAP_EMAIL` / `VPNC_BOOTSTRAP_PASSWORD`
+(nur wenn noch keine Benutzer existieren). Alternativ CLI:
+
 ```bash
 docker compose exec control vpnc-control bootstrap-admin \
   --email admin@example.com \
   --password 'mindestens-10-zeichen'
 ```
 
-Passwort idealerweise über Env:
-
-```bash
-docker compose exec -e VPNC_BOOTSTRAP_PASSWORD='mindestens-10-zeichen' \
-  control vpnc-control bootstrap-admin --email admin@example.com
-```
-
-`bootstrap-admin` schlägt fehl, wenn bereits Benutzer existieren (Absicht).
-
 ### 2.5 Dashboard öffnen
 
-Browser: **http://127.0.0.1:8080** (sobald Control das Static-Dashboard ausliefert)
-bzw. parallel Dev-Dashboard: siehe Abschnitt 3.
-
-Login mit der Admin-E-Mail und dem gesetzten Passwort.
+Browser: **http://127.0.0.1:8080** – Login, Geräte, Profile, Server usw. laufen
+auf derselben Domain wie die API (`/api/...`).
 
 ### 2.6 Optional: Node-Container
 
 ```bash
-# Join-Token zuvor per API / später Dashboard erzeugen
 export VPNC_JOIN_TOKEN='...'
 docker compose --profile node up -d node
 ```
 
-Der Node-Profil-Service braucht `NET_ADMIN` und `/dev/net/tun` (nur Linux).
+Der Node braucht `NET_ADMIN` und `/dev/net/tun` (nur Linux).
 
 ---
 
@@ -134,18 +119,12 @@ Der Node-Profil-Service braucht `NET_ADMIN` und `/dev/net/tun` (nur Linux).
 ### 3.1 Abhängigkeiten
 
 ```bash
-# Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-
-# Node + pnpm
 npm install -g pnpm@10
-
-# optional
-cargo install just
 ```
 
 Windows: [Build Tools for Visual Studio](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
-mit Workload „Desktopentwicklung mit C++“ installieren.
+mit Workload „Desktopentwicklung mit C++“.
 
 ### 3.2 Bauen und testen
 
@@ -153,19 +132,18 @@ mit Workload „Desktopentwicklung mit C++“ installieren.
 pnpm install
 cargo build --workspace
 cargo test --workspace
-# oder:
-just build && just test && just lint
+pnpm --filter @vpnc/dashboard build
 ```
 
 ### 3.3 Control lokal mit SQLite
 
 ```powershell
-# PowerShell (Windows)
 $env:VPNC_DATABASE_URL = "sqlite://./vpnc-dev.db?mode=rwc"
 $env:VPNC_MASTER_KEY   = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 $env:VPNC_HTTP_BIND    = "127.0.0.1:8080"
 $env:VPNC_GRPC_BIND    = "127.0.0.1:50051"
 $env:VPNC_COOKIE_SECURE = "false"
+$env:VPNC_STATIC_DIR   = "apps/dashboard/build"   # nach pnpm build
 
 cargo run -p vpnc-control -- bootstrap-admin `
   --email admin@example.com --password "dev-password-ok"
@@ -173,64 +151,24 @@ cargo run -p vpnc-control -- bootstrap-admin `
 cargo run -p vpnc-control
 ```
 
-```bash
-# Bash
-export VPNC_DATABASE_URL="sqlite://./vpnc-dev.db?mode=rwc"
-export VPNC_MASTER_KEY="$(openssl rand -hex 32)"
-export VPNC_HTTP_BIND="127.0.0.1:8080"
-export VPNC_GRPC_BIND="127.0.0.1:50051"
-export VPNC_COOKIE_SECURE=false
+### 3.4 Dashboard-Dev-Server (optional)
 
-cargo run -p vpnc-control -- bootstrap-admin \
-  --email admin@example.com --password 'dev-password-ok'
+Nur nötig, wenn du die UI heiß neu lädst. API weiter über Control:
 
-cargo run -p vpnc-control
-```
-
-### 3.4 Control mit lokalem PostgreSQL
-
-```bash
-createdb vpnc   # oder pgAdmin / SQL
-export VPNC_DATABASE_URL="postgres://postgres:GEHEIM@localhost:5432/vpnc"
-export VPNC_TEST_DATABASE_URL="$VPNC_DATABASE_URL"   # für Integrationstests
-cargo run -p vpnc-control
-```
-
-### 3.5 Dashboard (Dev-Server)
-
-```bash
-# API-Basis auf lokalen Control zeigen
-# Windows PowerShell:
+```powershell
 $env:VITE_API_BASE = "http://127.0.0.1:8080"
 pnpm --filter @vpnc/dashboard dev
 ```
 
-Standardmäßig öffnet Vite z. B. **http://127.0.0.1:5173**. Cookies funktionieren
-nur, wenn Control `VPNC_COOKIE_SECURE=false` setzt und CORS/Same-Site für Dev
-passen (aktuell SameSite=Strict auf gleicher Site bzw. Proxy empfohlen).
+`VITE_API_BASE` ist optional und in Produktion leer (relative `/api/...`).
+Für Dev: Control mit `VPNC_COOKIE_SECURE=false`; Session-Cookie ist `SameSite=Lax`.
 
 ---
 
 ## 4. Bare-Metal / systemd (Produktionsskizze)
 
-Einheiten liegen unter `deploy/systemd/`:
-
-- `vpnc-control.service`
-- `vpnc-node.service`
-
-Beispiel:
-
-```bash
-sudo useradd --system --home /var/lib/vpnc --shell /usr/sbin/nologin vpnc
-sudo mkdir -p /etc/vpnc /var/lib/vpnc
-sudo cp target/release/vpnc-control /usr/local/bin/
-sudo cp deploy/systemd/vpnc-control.service /etc/systemd/system/
-# Config: /etc/vpnc/control.toml + Env VPNC_*
-sudo systemctl daemon-reload
-sudo systemctl enable --now vpnc-control
-```
-
-Beispiel `control.toml`:
+Einheiten unter `deploy/systemd/`. Binary + gebautes Dashboard nach
+`VPNC_STATIC_DIR` (z. B. `/var/lib/vpnc/static`) legen.
 
 ```toml
 http_bind = "0.0.0.0:8080"
@@ -238,6 +176,8 @@ grpc_bind = "0.0.0.0:50051"
 database_url = "postgres://vpnc@/vpnc?host=/var/run/postgresql"
 session_hours = 24
 cookie_secure = true
+static_dir = "/var/lib/vpnc/static"
+trust_forwarded_headers = true
 
 [telemetry]
 filter = "info"
@@ -248,32 +188,22 @@ json = true
 
 ## 5. Erster Admin und Login
 
-1. `bootstrap-admin` ausführen (Compose oder lokal).
-2. Browser öffnen → Login-Seite.
-3. E-Mail + Passwort eingeben → **Einloggen**.
-4. Session-Cookie: `HttpOnly`, `SameSite=Strict`, optional `Secure`.
+1. Auto-Bootstrap (`VPNC_BOOTSTRAP_*`) oder `bootstrap-admin`
+2. Browser → `https://<host>/login`
+3. Session-Cookie: `HttpOnly`, `SameSite=Lax`, `Secure` in Produktion
 
-### So sieht der Login aus (Zielbild)
-
-**Hell:**
-
-![Login Hellmodus](images/vpnc-login-light.jpg)
-
-**Dunkel:**
-
-![Login Dunkelmodus](images/vpnc-login-dark.jpg)
-
-Nach dem Login landet man auf der Übersicht:
-
-![Dashboard Übersicht](images/vpnc-dashboard-home.jpg)
+Vorschaubilder: [Abschnitt 8](#8-dashboard).
 
 ---
 
 ## 6. Server hinzufügen
 
-### 6.1 Über die API (jetzt verfügbar)
+### 6.1 Dashboard
 
-Join-Token erzeugen (als eingeloggter Admin, Cookie mitsenden):
+**Server** → anlegen (Rolle `classic`, CIDR z. B. `10.66.0.0/24`) → **Join-Token
+erzeugen** → Token und fertigen `vpnc-node`-/`docker`-Befehl einmalig kopieren.
+
+### 6.2 API
 
 ```bash
 curl -s -X POST http://127.0.0.1:8080/api/nodes/join-tokens \
@@ -282,7 +212,7 @@ curl -s -X POST http://127.0.0.1:8080/api/nodes/join-tokens \
   -d '{"role":"classic","ttl_minutes":60}'
 ```
 
-Antwort enthält einmaliges `token`. Auf dem Server:
+Node:
 
 ```bash
 vpnc-node run \
@@ -292,50 +222,25 @@ vpnc-node run \
   --name edge-1
 ```
 
-Node-CRUD und Status: `GET/POST /api/nodes`.
-
-### 6.2 Über das Dashboard (Zielbild)
-
-Server-Liste:
-
-![Server-Liste](images/vpnc-nodes-list.jpg)
-
-Assistent „Server hinzufügen“ inkl. Host-Key-Bestätigung:
-
-![Server hinzufügen](images/vpnc-add-server-wizard.jpg)
-
-Ablauf Zielbild:
-
-1. Host/IP, Port, Benutzer, Passwort **oder** SSH-Key, Rolle, Region
-2. Host-Key-Fingerprint anzeigen und bestätigen
-3. Preflight (Distro, Architektur, sudo, WireGuard-Modul, Ports)
-4. Installation mit Live-Log (SSE)
-5. Node erscheint **online**
-
-SSH-Zugangsdaten werden **nie** in der DB gespeichert (nur RAM des Jobs).
-
 ---
 
 ## 7. Gerät und WireGuard-Profil
 
-### 7.1 Per API (jetzt)
+1. **Geräte** → anlegen
+2. **Profile** → Gerät + Server wählen → anlegen
+3. Einmal-Download: `.conf` + QR (Hinweis in der UI)
+4. In die offizielle WireGuard-App importieren
 
-1. Gerät anlegen: `POST /api/devices` `{"name":"Laptop"}`
-2. Classic-Node anlegen (mit `tunnel_cidr_v4`, z. B. `10.66.0.0/24`)
-3. Profil: `POST /api/profiles` `{"device_id":"...","node_id":"..."}`
-4. Einmal-Download: `GET /api/profiles/{id}/download` → `.conf` + QR (PNG Base64)
-5. In die offizielle WireGuard-App importieren
-
-Private Keys werden **nicht** in der Datenbank gespeichert; der Download
-funktioniert genau einmal.
-
-### 7.2 Zielbild im Dashboard
-
-![Profil mit QR-Code](images/vpnc-profile-qr.jpg)
+Private Keys werden **nicht** in der DB gespeichert; der Download funktioniert
+genau einmal.
 
 ---
 
-## 8. Dashboard-Vorschau
+## 8. Dashboard
+
+Navigation: Geräte, Profile; für Admins zusätzlich Benutzer, Server, Audit,
+Einstellungen. Unbekannte Pfade → echte 404; fehlende Admin-Rechte → „Keine
+Berechtigung“ (kein 404).
 
 | Ansicht | Datei |
 |---|---|
@@ -343,13 +248,7 @@ funktioniert genau einmal.
 | Login dunkel | [`images/vpnc-login-dark.jpg`](images/vpnc-login-dark.jpg) |
 | Übersicht | [`images/vpnc-dashboard-home.jpg`](images/vpnc-dashboard-home.jpg) |
 | Server-Liste | [`images/vpnc-nodes-list.jpg`](images/vpnc-nodes-list.jpg) |
-| Server-Assistent | [`images/vpnc-add-server-wizard.jpg`](images/vpnc-add-server-wizard.jpg) |
 | Profil + QR | [`images/vpnc-profile-qr.jpg`](images/vpnc-profile-qr.jpg) |
-
-Rollen:
-
-- **Admin:** Benutzer, Geräte, Server, Profile, Audit, Einstellungen
-- **User:** nur eigene Geräte und Profile
 
 ---
 
@@ -360,62 +259,42 @@ Präfix `VPNC_`, Nested Keys mit `__` (figment).
 | Variable | Bedeutung | Beispiel |
 |---|---|---|
 | `VPNC_DATABASE_URL` | SQLite oder Postgres | `postgres://vpnc:vpnc@db/vpnc` |
-| `VPNC_MASTER_KEY` | 32 Byte Hex/raw | `openssl rand -hex 32` |
-| `VPNC_HTTP_BIND` | REST + später Static UI | `0.0.0.0:8080` |
+| `VPNC_MASTER_KEY` | 64 Hex oder Base64(32 Bytes) | `openssl rand -hex 32` |
+| `VPNC_HTTP_BIND` | REST + Static UI | `0.0.0.0:8080` |
 | `VPNC_GRPC_BIND` | Node-gRPC | `0.0.0.0:50051` |
+| `VPNC_STATIC_DIR` | Dashboard-Build | `/app/static` |
 | `VPNC_COOKIE_SECURE` | Secure-Flag Session-Cookie | `true` in Prod |
+| `VPNC_TRUST_FORWARDED_HEADERS` | `X-Forwarded-*` von Proxy | `true` hinter Traefik |
+| `VPNC_PUBLIC_URL` | öffentliche HTTPS-URL | `https://vpnc.example.com` |
+| `VPNC_PUBLIC_GRPC` | gRPC-URL in Join-Befehlen | `http://host:50051` |
 | `VPNC_SESSION_HOURS` | Session-Lebensdauer | `24` |
+| `VPNC_BOOTSTRAP_EMAIL` | Auto-Admin (nur leere DB) | — |
+| `VPNC_BOOTSTRAP_PASSWORD` | Auto-Admin-Passwort | — |
 | `VPNC_TELEMETRY__JSON` | JSON-Logs | `true` |
 | `VPNC_TELEMETRY__FILTER` | tracing-Filter | `info` |
-| `VPNC_BOOTSTRAP_PASSWORD` | nur für CLI bootstrap | — |
 | `VPNC_JOIN_TOKEN` | Node-Registrierung | einmalig |
 | `VPNC_TEST_DATABASE_URL` | Postgres-Integrationstests | — |
 
-Datei-Fallback: `/etc/vpnc/control.toml` bzw. `--config pfad.toml`.
+Migrationen laufen beim Start; bei nicht bereiter DB wird mit Backoff erneut versucht.
 
 ---
 
 ## 10. Update, Backup, Troubleshooting
 
-### Update
-
-Siehe [update.md](update.md). Kurz: neues Control-Image/Binary, Migrationen
-laufen beim Start; Nodes später per signiertem Self-Update.
-
-### Backup
-
-Siehe [backup-restore.md](backup-restore.md). **Immer** auch `VPNC_MASTER_KEY`
-sichern.
-
-### Häufige Probleme
+Siehe [update.md](update.md), [backup-restore.md](backup-restore.md). **Immer**
+`VPNC_MASTER_KEY` sichern.
 
 | Symptom | Prüfung |
 |---|---|
-| `linker link.exe not found` | VS Build Tools C++ |
-| Login 401 nach Dev-Reload | Cookie Secure/`SameSite`, API-Host |
-| `bootstrap refused: users already exist` | DB zurücksetzen oder Admin-Passwort-Reset (noch manuell) |
-| Postgres-Test skipped | `VPNC_TEST_DATABASE_URL` setzen |
-| Node registriert nicht | Join-Token Ablauf/Hash, gRPC-Port, Firewall |
-| WireGuard verbindet nicht | Endpoint, Server-Public-Key, UDP 51820, NAT |
-
-Health:
+| Login 401 | Cookie Secure/`SameSite`, HTTPS, `VPNC_TRUST_FORWARDED_HEADERS` |
+| `bootstrap refused` / Bootstrap ignoriert | User existieren bereits |
+| Dashboard 404 auf `/` | `VPNC_STATIC_DIR`, Image neu bauen |
+| Node registriert nicht | Join-Token, gRPC-Port 50051, Firewall |
+| WireGuard verbindet nicht | Endpoint, Public-Key, UDP 51820 |
 
 ```bash
 curl -s http://127.0.0.1:8080/api/health
 curl -s http://127.0.0.1:8080/api/openapi.json | head
 ```
 
----
-
-## Checkliste „frisch installiert“
-
-- [ ] Postgres (oder SQLite Dev) erreichbar
-- [ ] `VPNC_MASTER_KEY` gesetzt und gesichert
-- [ ] `vpnc-control` läuft, `/api/health` = ok
-- [ ] Admin per `bootstrap-admin` angelegt
-- [ ] Login im Browser funktioniert
-- [ ] Join-Token erzeugt, Node registriert (oder Classic-Node in API)
-- [ ] Gerät + WireGuard-Profil erzeugt und in der offiziellen App importiert
-- [ ] Backup-Plan für DB + Master-Key dokumentiert
-
-Weiterführend: [geodns.md](geodns.md) · [backup-restore.md](backup-restore.md) · [update.md](update.md) · ADRs in `docs/adr/`.
+Weiterführend: [deploy-coolify.md](deploy-coolify.md) · [geodns.md](geodns.md) · ADRs in `docs/adr/`.

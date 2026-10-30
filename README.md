@@ -2,8 +2,7 @@
 
 Selfhosted VPN-Plattform mit Multi-Protokoll-Client und Web-Dashboard.
 
-**Installation:** siehe **[docs/installation.md](docs/installation.md)**  
-(inkl. Docker-Schnellstart, Quellcode-Setup und UI-Vorschaubilder).
+**Installation:** [docs/installation.md](docs/installation.md) · **Coolify:** [docs/deploy-coolify.md](docs/deploy-coolify.md)
 
 ## Grundsatz: Auf dem Draht ist alles WireGuard
 

@@ -18,13 +18,18 @@ services:
   control:
     build:
       context: .
-      dockerfile: deploy/docker/Dockerfile.control
+      dockerfile: Dockerfile
     environment:
       VPNC_DATABASE_URL: postgres://vpnc:vpnc@postgres:5432/vpnc
       VPNC_HTTP_BIND: 0.0.0.0:8080
       VPNC_GRPC_BIND: 0.0.0.0:50051
       VPNC_MASTER_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
       VPNC_COOKIE_SECURE: "false"
+      VPNC_TRUST_FORWARDED_HEADERS: "false"
+      VPNC_STATIC_DIR: /app/static
+      VPNC_BOOTSTRAP_EMAIL: ${VPNC_BOOTSTRAP_EMAIL:-admin@example.com}
+      VPNC_BOOTSTRAP_PASSWORD: ${VPNC_BOOTSTRAP_PASSWORD:-dev-password-ok}
+      VPNC_TELEMETRY__JSON: "true"
     ports:
       - "8080:8080"
       - "50051:50051"
