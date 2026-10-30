@@ -67,14 +67,19 @@ struct JoinTokenRequest {
 struct JoinTokenResponse {
     token: String,
     expires_at: String,
+    /// Ready-to-copy CLI install command.
+    install_command: String,
+    /// Ready-to-copy docker run example.
+    docker_command: String,
 }
 
 async fn list_nodes(
     State(state): State<AppState>,
-    Extension(AuthUser(actor)): Extension<AuthUser>,
+    Extension(AuthUser(_actor)): Extension<AuthUser>,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<ListResponse>, ApiError> {
-    require_admin(&actor)?;
+    // Authenticated users may list nodes (needed to pick a node when creating a profile).
+    // Mutations remain admin-only.
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
     let mut items = fetch_nodes(
         &state.db,
@@ -246,9 +251,33 @@ async fn create_join_token(
         None,
     )
     .await;
+    let grpc = state
+        .config
+        .public_grpc
+        .clone()
+        .unwrap_or_else(|| state.config.grpc_bind.clone());
+    let grpc_url = if grpc.starts_with("http://") || grpc.starts_with("https://") {
+        grpc
+    } else {
+        format!("http://{grpc}")
+    };
+    let name_flag = body
+        .node_name
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(|n| format!(" --name {n}"))
+        .unwrap_or_default();
+    let role = body.role.to_string();
+    let install_command =
+        format!("vpnc-node run --control {grpc_url} --join-token {token} --role {role}{name_flag}");
+    let docker_command = format!(
+        "docker run --rm --cap-add=NET_ADMIN --device=/dev/net/tun -e VPNC_JOIN_TOKEN={token} ghcr.io/vpnc/vpnc-node:latest run --control {grpc_url} --join-token {token} --role {role}{name_flag}"
+    );
     Ok(Json(JoinTokenResponse {
         token,
         expires_at: expires.to_rfc3339(),
+        install_command,
+        docker_command,
     }))
 }
 

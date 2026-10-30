@@ -1,5 +1,7 @@
 //! Step 4: permissions, audit, openapi.
 
+#![allow(clippy::field_reassign_with_default)]
+
 use axum::body::Body;
 use axum::http::{header, Method, Request, StatusCode};
 use http_body_util::BodyExt;
@@ -134,7 +136,7 @@ async fn user_cannot_see_foreign_devices_and_audit_is_written() {
         .iter()
         .map(|e| e["action"].as_str().unwrap())
         .collect();
-    assert!(actions.iter().any(|a| *a == "device.create"));
+    assert!(actions.contains(&"device.create"));
 
     // OpenAPI
     let req = Request::builder()

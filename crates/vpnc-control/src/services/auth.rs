@@ -146,7 +146,7 @@ impl AuthService {
     pub fn session_cookie(&self, raw_token: &str) -> Cookie<'static> {
         let mut builder = Cookie::build((SESSION_COOKIE, raw_token.to_string()))
             .http_only(true)
-            .same_site(SameSite::Strict)
+            .same_site(SameSite::Lax)
             .path("/")
             .max_age(cookie::time::Duration::hours(self.session_hours));
         if self.cookie_secure {
@@ -159,7 +159,7 @@ impl AuthService {
     pub fn clear_session_cookie(&self) -> Cookie<'static> {
         let mut builder = Cookie::build((SESSION_COOKIE, ""))
             .http_only(true)
-            .same_site(SameSite::Strict)
+            .same_site(SameSite::Lax)
             .path("/")
             .max_age(cookie::time::Duration::seconds(0));
         if self.cookie_secure {

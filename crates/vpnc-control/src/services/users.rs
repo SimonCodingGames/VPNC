@@ -77,12 +77,16 @@ pub async fn bootstrap_admin(db: &Db, email: &str, password: &str) -> anyhow::Re
     }
 
     let count: i64 = match db {
-        Db::Sqlite(pool) => sqlx::query_scalar("SELECT COUNT(*) FROM users")
-            .fetch_one(pool)
-            .await?,
-        Db::Postgres(pool) => sqlx::query_scalar("SELECT COUNT(*) FROM users")
-            .fetch_one(pool)
-            .await?,
+        Db::Sqlite(pool) => {
+            sqlx::query_scalar("SELECT COUNT(*) FROM users")
+                .fetch_one(pool)
+                .await?
+        }
+        Db::Postgres(pool) => {
+            sqlx::query_scalar("SELECT COUNT(*) FROM users")
+                .fetch_one(pool)
+                .await?
+        }
     };
     if count > 0 {
         bail!("bootstrap refused: users already exist");
@@ -134,21 +138,21 @@ pub async fn bootstrap_admin(db: &Db, email: &str, password: &str) -> anyhow::Re
     })
 }
 
-/// Looks up a user by email.
+/// Looks up a user by email. Disabled accounts are treated as missing.
 pub async fn find_by_email(db: &Db, email: &str) -> anyhow::Result<Option<(UserRecord, String)>> {
     let email = email.trim().to_lowercase();
     let row = match db {
         Db::Sqlite(pool) => {
-            sqlx::query_as::<_, (String, String, String, String)>(
-                "SELECT id, email, password_hash, role FROM users WHERE email = ?",
+            sqlx::query_as::<_, (String, String, String, String, Option<String>)>(
+                "SELECT id, email, password_hash, role, disabled_at FROM users WHERE email = ?",
             )
             .bind(&email)
             .fetch_optional(pool)
             .await?
         }
         Db::Postgres(pool) => {
-            sqlx::query_as::<_, (String, String, String, String)>(
-                "SELECT id, email, password_hash, role FROM users WHERE email = $1",
+            sqlx::query_as::<_, (String, String, String, String, Option<String>)>(
+                "SELECT id, email, password_hash, role, disabled_at FROM users WHERE email = $1",
             )
             .bind(&email)
             .fetch_optional(pool)
@@ -157,7 +161,8 @@ pub async fn find_by_email(db: &Db, email: &str) -> anyhow::Result<Option<(UserR
     };
 
     Ok(match row {
-        Some((id, email, password_hash, role)) => Some((
+        Some((_, _, _, _, Some(_))) => None,
+        Some((id, email, password_hash, role, None)) => Some((
             UserRecord {
                 id: Uuid::parse_str(&id)?,
                 email,

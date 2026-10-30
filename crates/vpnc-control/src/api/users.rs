@@ -16,7 +16,10 @@ use uuid::Uuid;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/users", get(list_users).post(create_user))
-        .route("/api/users/{id}", get(get_user).delete(delete_user))
+        .route(
+            "/api/users/{id}",
+            get(get_user).patch(update_user).delete(delete_user),
+        )
 }
 
 #[derive(Debug, Deserialize)]
@@ -32,11 +35,20 @@ struct CreateUserRequest {
     role: UserRole,
 }
 
+#[derive(Debug, Deserialize)]
+struct UpdateUserRequest {
+    role: Option<UserRole>,
+    password: Option<String>,
+    /// Soft-disable (`true`) or re-enable (`false`).
+    disabled: Option<bool>,
+}
+
 #[derive(Debug, Serialize)]
 struct UserResponse {
     id: String,
     email: String,
     role: UserRole,
+    disabled: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -110,6 +122,7 @@ async fn create_user(
             id: id.to_string(),
             email,
             role: body.role,
+            disabled: false,
         }),
     ))
 }
@@ -120,15 +133,118 @@ async fn get_user(
     Path(id): Path<Uuid>,
 ) -> Result<Json<UserResponse>, ApiError> {
     require_admin(&actor)?;
-    let user = users::find_by_id(&state.db, id)
+    fetch_user_response(&state.db, id)
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::not_found("user not found"))
+        .map(Json)
+}
+
+async fn update_user(
+    State(state): State<AppState>,
+    Extension(AuthUser(actor)): Extension<AuthUser>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<UpdateUserRequest>,
+) -> Result<Json<UserResponse>, ApiError> {
+    require_admin(&actor)?;
+    let _existing = fetch_user_response(&state.db, id)
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found("user not found"))?;
-    Ok(Json(UserResponse {
-        id: user.id.to_string(),
-        email: user.email,
-        role: user.role,
-    }))
+    let now = Utc::now().to_rfc3339();
+    if let Some(role) = body.role {
+        match &state.db {
+            Db::Sqlite(pool) => {
+                sqlx::query("UPDATE users SET role = ?, updated_at = ? WHERE id = ?")
+                    .bind(role.as_str())
+                    .bind(&now)
+                    .bind(id.to_string())
+                    .execute(pool)
+                    .await
+                    .map(|_| ())
+            }
+            Db::Postgres(pool) => {
+                sqlx::query("UPDATE users SET role = $1, updated_at = $2 WHERE id = $3")
+                    .bind(role.as_str())
+                    .bind(&now)
+                    .bind(id.to_string())
+                    .execute(pool)
+                    .await
+                    .map(|_| ())
+            }
+        }
+        .map_err(ApiError::internal)?;
+    }
+    if let Some(password) = body.password {
+        if password.len() < 10 {
+            return Err(ApiError::bad_request(
+                "password must be at least 10 characters",
+            ));
+        }
+        let hash = users::hash_password(&password).map_err(ApiError::internal)?;
+        match &state.db {
+            Db::Sqlite(pool) => {
+                sqlx::query("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?")
+                    .bind(&hash)
+                    .bind(&now)
+                    .bind(id.to_string())
+                    .execute(pool)
+                    .await
+                    .map(|_| ())
+            }
+            Db::Postgres(pool) => {
+                sqlx::query("UPDATE users SET password_hash = $1, updated_at = $2 WHERE id = $3")
+                    .bind(&hash)
+                    .bind(&now)
+                    .bind(id.to_string())
+                    .execute(pool)
+                    .await
+                    .map(|_| ())
+            }
+        }
+        .map_err(ApiError::internal)?;
+    }
+    if let Some(disabled) = body.disabled {
+        if disabled && actor.id == id {
+            return Err(ApiError::bad_request("cannot disable yourself"));
+        }
+        let disabled_at: Option<String> = disabled.then(|| now.clone());
+        match &state.db {
+            Db::Sqlite(pool) => {
+                sqlx::query("UPDATE users SET disabled_at = ?, updated_at = ? WHERE id = ?")
+                    .bind(&disabled_at)
+                    .bind(&now)
+                    .bind(id.to_string())
+                    .execute(pool)
+                    .await
+                    .map(|_| ())
+            }
+            Db::Postgres(pool) => {
+                sqlx::query("UPDATE users SET disabled_at = $1, updated_at = $2 WHERE id = $3")
+                    .bind(&disabled_at)
+                    .bind(&now)
+                    .bind(id.to_string())
+                    .execute(pool)
+                    .await
+                    .map(|_| ())
+            }
+        }
+        .map_err(ApiError::internal)?;
+    }
+    write_audit(
+        &state.db,
+        Some(actor.id),
+        "user.update",
+        Some("user"),
+        Some(&id.to_string()),
+        None,
+    )
+    .await;
+    fetch_user_response(&state.db, id)
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::not_found("user not found"))
+        .map(Json)
 }
 
 async fn delete_user(
@@ -158,17 +274,43 @@ async fn delete_user(
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
+async fn fetch_user_response(db: &Db, id: Uuid) -> anyhow::Result<Option<UserResponse>> {
+    let row: Option<(String, String, String, Option<String>)> = match db {
+        Db::Sqlite(pool) => {
+            sqlx::query_as("SELECT id, email, role, disabled_at FROM users WHERE id = ?")
+                .bind(id.to_string())
+                .fetch_optional(pool)
+                .await?
+        }
+        Db::Postgres(pool) => {
+            sqlx::query_as("SELECT id, email, role, disabled_at FROM users WHERE id = $1")
+                .bind(id.to_string())
+                .fetch_optional(pool)
+                .await?
+        }
+    };
+    Ok(match row {
+        Some((id, email, role, disabled_at)) => Some(UserResponse {
+            id,
+            email,
+            role: UserRole::parse(&role)?,
+            disabled: disabled_at.is_some(),
+        }),
+        None => None,
+    })
+}
+
 async fn fetch_users(
     db: &Db,
     cursor: Option<&str>,
     limit: i64,
 ) -> anyhow::Result<Vec<UserResponse>> {
-    let rows: Vec<(String, String, String)> = match db {
+    let rows: Vec<(String, String, String, Option<String>)> = match db {
         Db::Sqlite(pool) => {
             if let Some(cursor) = cursor {
                 sqlx::query_as(
                     r#"
-                    SELECT id, email, role FROM users
+                    SELECT id, email, role, disabled_at FROM users
                     WHERE id > ? ORDER BY id ASC LIMIT ?
                     "#,
                 )
@@ -179,7 +321,7 @@ async fn fetch_users(
             } else {
                 sqlx::query_as(
                     r#"
-                    SELECT id, email, role FROM users
+                    SELECT id, email, role, disabled_at FROM users
                     ORDER BY id ASC LIMIT ?
                     "#,
                 )
@@ -192,7 +334,7 @@ async fn fetch_users(
             if let Some(cursor) = cursor {
                 sqlx::query_as(
                     r#"
-                    SELECT id, email, role FROM users
+                    SELECT id, email, role, disabled_at FROM users
                     WHERE id > $1 ORDER BY id ASC LIMIT $2
                     "#,
                 )
@@ -203,7 +345,7 @@ async fn fetch_users(
             } else {
                 sqlx::query_as(
                     r#"
-                    SELECT id, email, role FROM users
+                    SELECT id, email, role, disabled_at FROM users
                     ORDER BY id ASC LIMIT $1
                     "#,
                 )
@@ -214,11 +356,12 @@ async fn fetch_users(
         }
     };
     rows.into_iter()
-        .map(|(id, email, role)| {
+        .map(|(id, email, role, disabled_at)| {
             Ok(UserResponse {
                 id,
                 email,
                 role: UserRole::parse(&role)?,
+                disabled: disabled_at.is_some(),
             })
         })
         .collect()

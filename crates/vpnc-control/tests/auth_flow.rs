@@ -1,5 +1,7 @@
 //! Integration test: bootstrap admin, login, /me, logout (SQLite + optional Postgres).
 
+#![allow(clippy::field_reassign_with_default)]
+
 use axum::body::Body;
 use axum::http::{header, Method, Request, StatusCode};
 use http_body_util::BodyExt;
@@ -16,9 +18,7 @@ async fn run_auth_flow(database_url: &str) {
         "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     );
 
-    let db = Db::connect(database_url)
-        .await
-        .expect("connect db");
+    let db = Db::connect(database_url).await.expect("connect db");
     let user = users::bootstrap_admin(&db, "admin@example.com", "correct-horse-battery")
         .await
         .expect("bootstrap");
@@ -50,7 +50,7 @@ async fn run_auth_flow(database_url: &str) {
         .to_string();
     assert!(set_cookie.contains("vpnc_session="));
     assert!(set_cookie.to_ascii_lowercase().contains("httponly"));
-    assert!(set_cookie.to_ascii_lowercase().contains("samesite=strict"));
+    assert!(set_cookie.to_ascii_lowercase().contains("samesite=lax"));
 
     let body = login_res.into_body().collect().await.unwrap().to_bytes();
     let json: Value = serde_json::from_slice(&body).unwrap();

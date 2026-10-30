@@ -9,6 +9,7 @@ pub mod middleware;
 pub mod nodes;
 pub mod openapi;
 pub mod profiles;
+pub mod settings;
 pub mod users;
 
 use crate::app::AppState;
@@ -23,10 +24,8 @@ pub fn router(state: AppState) -> Router<AppState> {
         .merge(nodes::router())
         .merge(profiles::router())
         .merge(audit::router())
-        .layer(from_fn_with_state(
-            state.clone(),
-            middleware::require_auth,
-        ));
+        .merge(settings::router())
+        .layer(from_fn_with_state(state.clone(), middleware::require_auth));
 
     Router::new()
         .merge(health::router())

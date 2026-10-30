@@ -49,22 +49,49 @@ async fn openapi_json() -> Json<Value> {
                 }
             },
             "/api/users": {
-                "get": { "summary": "List users", "responses": { "200": { "description": "OK" } } },
-                "post": { "summary": "Create user", "responses": { "201": { "description": "Created" } } }
+                "get": { "summary": "List users (admin)", "responses": { "200": { "description": "OK" } } },
+                "post": { "summary": "Create user (admin)", "responses": { "201": { "description": "Created" } } }
+            },
+            "/api/users/{id}": {
+                "patch": { "summary": "Update user role/password/disabled (admin)", "responses": { "200": { "description": "OK" } } },
+                "delete": { "summary": "Delete user (admin)", "responses": { "204": { "description": "Deleted" } } }
             },
             "/api/devices": {
                 "get": { "summary": "List devices", "responses": { "200": { "description": "OK" } } },
                 "post": { "summary": "Create device", "responses": { "201": { "description": "Created" } } }
             },
+            "/api/devices/{id}": {
+                "patch": { "summary": "Rename device", "responses": { "200": { "description": "OK" } } },
+                "delete": { "summary": "Delete device", "responses": { "204": { "description": "Deleted" } } }
+            },
             "/api/nodes": {
                 "get": { "summary": "List nodes", "responses": { "200": { "description": "OK" } } },
                 "post": { "summary": "Create node", "responses": { "201": { "description": "Created" } } }
             },
+            "/api/nodes/{id}": {
+                "delete": { "summary": "Delete node", "responses": { "204": { "description": "Deleted" } } }
+            },
             "/api/nodes/join-tokens": {
-                "post": { "summary": "Create node join token", "responses": { "200": { "description": "Token" } } }
+                "post": {
+                    "summary": "Create node join token (once-visible)",
+                    "responses": { "200": { "description": "Token + install commands" } }
+                }
+            },
+            "/api/profiles": {
+                "get": { "summary": "List profiles", "responses": { "200": { "description": "OK" } } },
+                "post": { "summary": "Create profile (private key once)", "responses": { "201": { "description": "Created" } } }
+            },
+            "/api/profiles/{id}": {
+                "delete": { "summary": "Revoke/delete profile", "responses": { "204": { "description": "Deleted" } } }
+            },
+            "/api/profiles/{id}/download": {
+                "get": { "summary": "One-time WireGuard config download", "responses": { "200": { "description": "conf + QR" } } }
             },
             "/api/audit": {
-                "get": { "summary": "List audit events", "responses": { "200": { "description": "OK" } } }
+                "get": { "summary": "List audit events (admin)", "responses": { "200": { "description": "OK" } } }
+            },
+            "/api/settings": {
+                "get": { "summary": "Read-only settings (admin)", "responses": { "200": { "description": "OK" } } }
             }
         }
     }))

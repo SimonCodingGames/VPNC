@@ -61,6 +61,12 @@ impl IntoResponse for ApiError {
         struct Body {
             error: String,
         }
-        (self.status, Json(Body { error: self.message })).into_response()
+        (
+            self.status,
+            Json(Body {
+                error: self.message,
+            }),
+        )
+            .into_response()
     }
 }

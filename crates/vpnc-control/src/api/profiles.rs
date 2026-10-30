@@ -9,7 +9,7 @@ use crate::services::users::UserRole;
 use crate::services::wireguard::{
     conf_qr_png, render_client_conf, validate_conf, ClientConfParams, WgKeypair,
 };
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
@@ -21,9 +21,36 @@ use uuid::Uuid;
 /// Builds profile routes.
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/api/profiles", post(create_profile))
+        .route("/api/profiles", get(list_profiles).post(create_profile))
         .route("/api/profiles/{id}/download", get(download_profile))
         .route("/api/profiles/{id}/revoke", post(revoke_profile))
+}
+
+#[derive(Debug, Deserialize)]
+struct ListQuery {
+    cursor: Option<String>,
+    limit: Option<i64>,
+    device_id: Option<Uuid>,
+}
+
+#[derive(Debug, Serialize)]
+struct ProfileListItem {
+    id: String,
+    device_id: String,
+    node_id: Option<String>,
+    kind: String,
+    client_public_key: Option<String>,
+    assigned_ipv4: Option<String>,
+    assigned_ipv6: Option<String>,
+    revoked_at: Option<String>,
+    created_at: String,
+    download_available: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct ProfileListResponse {
+    items: Vec<ProfileListItem>,
+    next_cursor: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -49,6 +76,40 @@ use std::sync::{Mutex, OnceLock};
 fn pending_keys() -> &'static Mutex<HashMap<Uuid, String>> {
     static PENDING_KEYS: OnceLock<Mutex<HashMap<Uuid, String>>> = OnceLock::new();
     PENDING_KEYS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+async fn list_profiles(
+    State(state): State<AppState>,
+    Extension(AuthUser(actor)): Extension<AuthUser>,
+    Query(q): Query<ListQuery>,
+) -> Result<Json<ProfileListResponse>, ApiError> {
+    let limit = q.limit.unwrap_or(50).clamp(1, 200);
+    let owner = match actor.role {
+        UserRole::Admin => None,
+        UserRole::User => Some(actor.id),
+    };
+    let mut items = fetch_profiles(
+        &state.db,
+        owner,
+        q.device_id,
+        q.cursor.as_deref(),
+        limit + 1,
+    )
+    .await
+    .map_err(ApiError::internal)?;
+    let pending = pending_keys().lock().expect("pending keys");
+    for item in &mut items {
+        if let Ok(id) = Uuid::parse_str(&item.id) {
+            item.download_available = pending.contains_key(&id) && item.revoked_at.is_none();
+        }
+    }
+    drop(pending);
+    let mut next_cursor = None;
+    if (items.len() as i64) > limit {
+        items.truncate(limit as usize);
+        next_cursor = items.last().map(|p| p.id.clone());
+    }
+    Ok(Json(ProfileListResponse { items, next_cursor }))
 }
 
 async fn create_profile(
@@ -183,7 +244,7 @@ async fn download_profile(
         allowed_ips: "0.0.0.0/0, ::/0",
         dns: Some("1.1.1.1"),
     });
-    validate_conf(&conf).map_err(|e| ApiError::internal(e))?;
+    validate_conf(&conf).map_err(ApiError::internal)?;
     let qr = conf_qr_png(&conf).map_err(ApiError::internal)?;
 
     // Multipart-ish simple JSON envelope with conf + qr base64 (one response).
@@ -255,6 +316,7 @@ struct NodeRow {
     tunnel_cidr_v4: Option<String>,
     tunnel_cidr_v6: Option<String>,
     server_public_key: Option<String>,
+    #[allow(dead_code)]
     encrypted_server_private_key: Option<String>,
     public_ip: Option<String>,
 }
@@ -444,6 +506,97 @@ async fn insert_profile(
         }
     }
     Ok(())
+}
+
+async fn fetch_profiles(
+    db: &Db,
+    owner: Option<Uuid>,
+    device_id: Option<Uuid>,
+    cursor: Option<&str>,
+    limit: i64,
+) -> anyhow::Result<Vec<ProfileListItem>> {
+    // Join devices for ownership filtering.
+    let rows: Vec<(
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        String,
+    )> = match db {
+        Db::Sqlite(pool) => {
+            sqlx::query_as(
+                r#"
+                SELECT p.id, p.device_id, p.node_id, p.kind, p.client_public_key,
+                       p.assigned_ipv4, p.assigned_ipv6, p.revoked_at, p.created_at
+                FROM profiles p
+                JOIN devices d ON d.id = p.device_id
+                WHERE (?1 IS NULL OR d.user_id = ?1)
+                  AND (?2 IS NULL OR p.device_id = ?2)
+                  AND (?3 IS NULL OR p.id > ?3)
+                ORDER BY p.id ASC
+                LIMIT ?4
+                "#,
+            )
+            .bind(owner.map(|u| u.to_string()))
+            .bind(device_id.map(|u| u.to_string()))
+            .bind(cursor)
+            .bind(limit)
+            .fetch_all(pool)
+            .await?
+        }
+        Db::Postgres(pool) => {
+            sqlx::query_as(
+                r#"
+                SELECT p.id, p.device_id, p.node_id, p.kind, p.client_public_key,
+                       p.assigned_ipv4, p.assigned_ipv6, p.revoked_at, p.created_at
+                FROM profiles p
+                JOIN devices d ON d.id = p.device_id
+                WHERE ($1::text IS NULL OR d.user_id = $1)
+                  AND ($2::text IS NULL OR p.device_id = $2)
+                  AND ($3::text IS NULL OR p.id > $3)
+                ORDER BY p.id ASC
+                LIMIT $4
+                "#,
+            )
+            .bind(owner.map(|u| u.to_string()))
+            .bind(device_id.map(|u| u.to_string()))
+            .bind(cursor)
+            .bind(limit)
+            .fetch_all(pool)
+            .await?
+        }
+    };
+    Ok(rows
+        .into_iter()
+        .map(
+            |(
+                id,
+                device_id,
+                node_id,
+                kind,
+                client_public_key,
+                assigned_ipv4,
+                assigned_ipv6,
+                revoked_at,
+                created_at,
+            )| ProfileListItem {
+                id,
+                device_id,
+                node_id: Some(node_id),
+                kind,
+                client_public_key,
+                assigned_ipv4,
+                assigned_ipv6,
+                revoked_at,
+                created_at,
+                download_available: false,
+            },
+        )
+        .collect())
 }
 
 async fn fetch_profile(db: &Db, id: Uuid) -> anyhow::Result<Option<ProfileRow>> {

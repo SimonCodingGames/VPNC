@@ -17,9 +17,36 @@ pub enum Db {
 }
 
 impl Db {
+    /// Connects and migrates, retrying with exponential backoff if the DB is not ready.
+    pub async fn connect_with_retry(database_url: &str, max_attempts: u32) -> anyhow::Result<Self> {
+        let mut delay = Duration::from_secs(1);
+        let mut last_err = None;
+        for attempt in 1..=max_attempts.max(1) {
+            match Self::connect_once(database_url).await {
+                Ok(db) => return Ok(db),
+                Err(err) => {
+                    tracing::warn!(
+                        attempt,
+                        max_attempts,
+                        error = %err,
+                        "database not ready; retrying"
+                    );
+                    last_err = Some(err);
+                    tokio::time::sleep(delay).await;
+                    delay = (delay * 2).min(Duration::from_secs(30));
+                }
+            }
+        }
+        Err(last_err.unwrap_or_else(|| anyhow::anyhow!("database connection failed")))
+    }
+
     /// Connects using a `sqlite:` / `sqlite://` or `postgres://` / `postgresql://` URL
     /// and runs migrations.
     pub async fn connect(database_url: &str) -> anyhow::Result<Self> {
+        Self::connect_once(database_url).await
+    }
+
+    async fn connect_once(database_url: &str) -> anyhow::Result<Self> {
         if database_url.starts_with("sqlite:") {
             let opts = SqliteConnectOptions::from_str(database_url)
                 .context("invalid sqlite URL")?
@@ -53,5 +80,21 @@ impl Db {
         } else {
             bail!("unsupported database URL (expected sqlite: or postgres://): {database_url}");
         }
+    }
+
+    /// Returns the number of users (for bootstrap checks).
+    pub async fn user_count(&self) -> anyhow::Result<i64> {
+        Ok(match self {
+            Db::Sqlite(pool) => {
+                sqlx::query_scalar("SELECT COUNT(*) FROM users")
+                    .fetch_one(pool)
+                    .await?
+            }
+            Db::Postgres(pool) => {
+                sqlx::query_scalar("SELECT COUNT(*) FROM users")
+                    .fetch_one(pool)
+                    .await?
+            }
+        })
     }
 }

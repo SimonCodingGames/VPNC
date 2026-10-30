@@ -36,7 +36,7 @@ zeroize = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 axum = { version = "0.8", features = ["macros"] }
 tower = "0.5"
-tower-http = { version = "0.6", features = ["cors", "trace", "limit"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "limit", "fs", "set-header", "util"] }
 sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "sqlite", "postgres", "uuid", "chrono", "migrate"] }
 chrono = { version = "0.4", features = ["serde"] }
 argon2 = "0.5"

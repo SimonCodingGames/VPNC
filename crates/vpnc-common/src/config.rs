@@ -12,7 +12,13 @@ use thiserror::Error;
 pub enum ConfigError {
     /// Figment failed to merge or extract configuration.
     #[error("failed to load config: {0}")]
-    Figment(#[from] figment::Error),
+    Figment(Box<figment::Error>),
+}
+
+impl From<figment::Error> for ConfigError {
+    fn from(value: figment::Error) -> Self {
+        Self::Figment(Box::new(value))
+    }
 }
 
 /// Returns the default config path for a service: `/etc/vpnc/<service>.toml`.

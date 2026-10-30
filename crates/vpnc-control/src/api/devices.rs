@@ -18,7 +18,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/devices", get(list_devices).post(create_device))
         .route(
             "/api/devices/{id}",
-            get(get_device).delete(delete_device),
+            get(get_device).patch(update_device).delete(delete_device),
         )
 }
 
@@ -35,6 +35,11 @@ struct CreateDeviceRequest {
     name: String,
     /// Admin may create a device for another user.
     user_id: Option<Uuid>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateDeviceRequest {
+    name: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -129,6 +134,54 @@ async fn get_device(
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found("device not found"))?;
     ensure_device_access(&actor, &device)?;
+    Ok(Json(device))
+}
+
+async fn update_device(
+    State(state): State<AppState>,
+    Extension(AuthUser(actor)): Extension<AuthUser>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<UpdateDeviceRequest>,
+) -> Result<Json<DeviceResponse>, ApiError> {
+    let name = body.name.trim();
+    if name.is_empty() {
+        return Err(ApiError::bad_request("name required"));
+    }
+    let mut device = fetch_device(&state.db, id)
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::not_found("device not found"))?;
+    ensure_device_access(&actor, &device)?;
+    let now = Utc::now().to_rfc3339();
+    match &state.db {
+        Db::Sqlite(pool) => sqlx::query("UPDATE devices SET name = ?, updated_at = ? WHERE id = ?")
+            .bind(name)
+            .bind(&now)
+            .bind(id.to_string())
+            .execute(pool)
+            .await
+            .map(|_| ()),
+        Db::Postgres(pool) => {
+            sqlx::query("UPDATE devices SET name = $1, updated_at = $2 WHERE id = $3")
+                .bind(name)
+                .bind(&now)
+                .bind(id.to_string())
+                .execute(pool)
+                .await
+                .map(|_| ())
+        }
+    }
+    .map_err(ApiError::internal)?;
+    write_audit(
+        &state.db,
+        Some(actor.id),
+        "device.update",
+        Some("device"),
+        Some(&id.to_string()),
+        None,
+    )
+    .await;
+    device.name = name.to_string();
     Ok(Json(device))
 }
 
@@ -268,20 +321,16 @@ async fn fetch_devices(
 async fn fetch_device(db: &Db, id: Uuid) -> anyhow::Result<Option<DeviceResponse>> {
     let row: Option<(String, String, String, String)> = match db {
         Db::Sqlite(pool) => {
-            sqlx::query_as(
-                "SELECT id, user_id, name, created_at FROM devices WHERE id = ?",
-            )
-            .bind(id.to_string())
-            .fetch_optional(pool)
-            .await?
+            sqlx::query_as("SELECT id, user_id, name, created_at FROM devices WHERE id = ?")
+                .bind(id.to_string())
+                .fetch_optional(pool)
+                .await?
         }
         Db::Postgres(pool) => {
-            sqlx::query_as(
-                "SELECT id, user_id, name, created_at FROM devices WHERE id = $1",
-            )
-            .bind(id.to_string())
-            .fetch_optional(pool)
-            .await?
+            sqlx::query_as("SELECT id, user_id, name, created_at FROM devices WHERE id = $1")
+                .bind(id.to_string())
+                .fetch_optional(pool)
+                .await?
         }
     };
     Ok(row.map(|(id, user_id, name, created_at)| DeviceResponse {
