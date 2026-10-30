@@ -1,0 +1,23 @@
+{
+  "name": "@vpnc/client-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "lint": "prettier --check . && eslint ."
+  },
+  "dependencies": {
+    "@vpnc/ui": "workspace:*"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.36.0",
+    "@types/eslint": "^9.6.1",
+    "eslint": "^9.36.0",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^16.4.0",
+    "prettier": "^3.6.2",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.44.1"
+  }
+}

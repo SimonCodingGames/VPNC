@@ -1,0 +1,21 @@
+[Unit]
+Description=VPNC Control Plane
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vpnc
+Group=vpnc
+Environment=VPNC_DATABASE_URL=postgres://vpnc@localhost/vpnc
+ExecStart=/usr/local/bin/vpnc-control
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/vpnc
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

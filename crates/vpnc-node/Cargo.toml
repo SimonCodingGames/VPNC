@@ -1,0 +1,32 @@
+[package]
+name = "vpnc-node"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "VPNC server daemon with roles classic / ingress / egress"
+
+[[bin]]
+name = "vpnc-node"
+path = "src/main.rs"
+
+[dependencies]
+vpnc-common = { workspace = true }
+vpnc-wg = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+futures = { workspace = true }
+prost = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+tonic = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+rand = { workspace = true }
+uuid = { workspace = true }
+
+[build-dependencies]
+tonic-build = { workspace = true }
+protoc-bin-vendored = { workspace = true }

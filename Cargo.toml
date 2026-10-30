@@ -1,0 +1,76 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/vpnc-common",
+    "crates/vpnc-control",
+    "crates/vpnc-node",
+    "crates/vpnc-wg",
+    "crates/vpnc-core",
+    "apps/client-desktop/src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+license = "proprietary"
+repository = "https://github.com/vpnc/vpnc"
+
+[workspace.dependencies]
+vpnc-common = { path = "crates/vpnc-common" }
+vpnc-control = { path = "crates/vpnc-control" }
+vpnc-node = { path = "crates/vpnc-node" }
+vpnc-wg = { path = "crates/vpnc-wg" }
+vpnc-core = { path = "crates/vpnc-core" }
+
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+figment = { version = "0.10", features = ["toml", "env"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
+uuid = { version = "1", features = ["serde", "v4"] }
+zeroize = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+axum = { version = "0.8", features = ["macros"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace", "limit"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "sqlite", "postgres", "uuid", "chrono", "migrate"] }
+chrono = { version = "0.4", features = ["serde"] }
+argon2 = "0.5"
+password-hash = "0.5"
+rand = "0.8"
+chacha20poly1305 = "0.10"
+hex = "0.4"
+base64 = "0.22"
+clap = { version = "4", features = ["derive", "env"] }
+utoipa = { version = "5", features = ["axum_extras", "chrono", "uuid"] }
+utoipa-swagger-ui = { version = "9", features = ["axum"] }
+tower_governor = "0.6"
+axum-extra = { version = "0.10", features = ["cookie"] }
+cookie = "0.18"
+sha2 = "0.10"
+subtle = "2"
+http = "1"
+bytes = "1"
+futures = "0.3"
+async-trait = "0.1"
+x25519-dalek = { version = "2", features = ["static_secrets", "getrandom"] }
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+qrcode = "0.14"
+image = { version = "0.25", default-features = false, features = ["png"] }
+ipnet = { version = "2", features = ["serde"] }
+tonic = { version = "0.12", features = ["tls"] }
+prost = "0.13"
+prost-types = "0.13"
+tonic-build = "0.12"
+protoc-bin-vendored = "3"
+rcgen = "0.13"
+russh = "0.49"
+russh-keys = "0.49"
+tokio-stream = "0.1"
+serde_urlencoded = "0.7"
+csv = "1"
+tempfile = "3"

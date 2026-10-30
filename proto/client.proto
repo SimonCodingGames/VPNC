@@ -1,0 +1,20 @@
+syntax = "proto3";
+package vpnc.client.v1;
+
+service ClientService {
+  rpc ListUnicastEndpoints(ListUnicastEndpointsRequest) returns (ListUnicastEndpointsResponse);
+}
+
+message ListUnicastEndpointsRequest {
+  string cluster_id = 1;
+}
+
+message UnicastEndpoint {
+  string node_id = 1;
+  string endpoint = 2;
+  string region = 3;
+}
+
+message ListUnicastEndpointsResponse {
+  repeated UnicastEndpoint endpoints = 1;
+}

@@ -1,0 +1,10 @@
+[package]
+name = "vpnc-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Client core: tunnel backends and userspace router"
+
+[dependencies]
+vpnc-common.workspace = true

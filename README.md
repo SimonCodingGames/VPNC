@@ -2,6 +2,9 @@
 
 Selfhosted VPN-Plattform mit Multi-Protokoll-Client und Web-Dashboard.
 
+**Installation:** siehe **[docs/installation.md](docs/installation.md)**  
+(inkl. Docker-Schnellstart, Quellcode-Setup und UI-Vorschaubilder).
+
 ## Grundsatz: Auf dem Draht ist alles WireGuard
 
 Ein VPNC-Tunnel ist ein normales WireGuard-Profil. Es funktioniert in der offiziellen

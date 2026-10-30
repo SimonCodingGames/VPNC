@@ -1,0 +1,15 @@
+[package]
+name = "vpnc-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "VPNC desktop client (Tauri host)"
+
+[[bin]]
+name = "vpnc-desktop"
+path = "src/main.rs"
+
+[dependencies]
+vpnc-common.workspace = true
+vpnc-core.workspace = true

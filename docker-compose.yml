@@ -1,0 +1,51 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: vpnc
+      POSTGRES_PASSWORD: vpnc
+      POSTGRES_DB: vpnc
+    ports:
+      - "5432:5432"
+    volumes:
+      - vpnc_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vpnc -d vpnc"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  control:
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.control
+    environment:
+      VPNC_DATABASE_URL: postgres://vpnc:vpnc@postgres:5432/vpnc
+      VPNC_HTTP_BIND: 0.0.0.0:8080
+      VPNC_GRPC_BIND: 0.0.0.0:50051
+      VPNC_MASTER_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      VPNC_COOKIE_SECURE: "false"
+    ports:
+      - "8080:8080"
+      - "50051:50051"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  node:
+    profiles: ["node"]
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.node
+    environment:
+      VPNC_JOIN_TOKEN: "${VPNC_JOIN_TOKEN:-}"
+    depends_on:
+      - control
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+
+volumes:
+  vpnc_pg:

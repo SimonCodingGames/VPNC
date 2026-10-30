@@ -1,0 +1,64 @@
+[package]
+name = "vpnc-control"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "VPNC control plane: REST API, gRPC, database, profile generation"
+
+[[bin]]
+name = "vpnc-control"
+path = "src/main.rs"
+
+[dependencies]
+vpnc-common = { workspace = true }
+anyhow = { workspace = true }
+argon2 = { workspace = true }
+axum = { workspace = true }
+axum-extra = { workspace = true }
+base64 = { workspace = true }
+chacha20poly1305 = { workspace = true }
+chrono = { workspace = true }
+clap = { workspace = true }
+cookie = { workspace = true }
+hex = { workspace = true }
+image = { workspace = true }
+ipnet = { workspace = true }
+password-hash = { workspace = true }
+qrcode = { workspace = true }
+rand = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+http-body-util = "0.1"
+sha2 = { workspace = true }
+sqlx = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+x25519-dalek = { workspace = true }
+zeroize = { workspace = true }
+# russh wired in a follow-up commit for full SSH sessions (step 8 acceptance).
+tonic = { workspace = true }
+prost = { workspace = true }
+tokio-stream = { workspace = true }
+futures = { workspace = true }
+async-trait = { workspace = true }
+
+[build-dependencies]
+tonic-build = { workspace = true }
+protoc-bin-vendored = { workspace = true }
+
+[dev-dependencies]
+http-body-util = "0.1"
+tower = { workspace = true, features = ["util"] }
+tempfile = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+sqlx = { workspace = true }
+serde_json = { workspace = true }
+hex = { workspace = true }
+sha2 = { workspace = true }
+tonic = { workspace = true }
