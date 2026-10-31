@@ -14,7 +14,8 @@ COPY packages packages
 RUN pnpm --filter @vpnc/dashboard build
 
 # --- Rust (cargo-chef for dependency caching) ---
-FROM lukemathwalker/cargo-chef:latest-rust-1.85-bookworm AS chef
+# Cargo.lock needs rustc >= 1.89 (uuid 1.29). Track current stable (rust-toolchain.toml).
+FROM lukemathwalker/cargo-chef:latest-rust-1.99.1-bookworm AS chef
 WORKDIR /src
 
 FROM chef AS planner
