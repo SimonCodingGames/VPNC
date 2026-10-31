@@ -5,8 +5,6 @@ services:
       POSTGRES_USER: vpnc
       POSTGRES_PASSWORD: vpnc
       POSTGRES_DB: vpnc
-    ports:
-      - "5432:5432"
     volumes:
       - vpnc_pg:/var/lib/postgresql/data
     healthcheck:
@@ -30,8 +28,11 @@ services:
       VPNC_BOOTSTRAP_EMAIL: ${VPNC_BOOTSTRAP_EMAIL:-admin@example.com}
       VPNC_BOOTSTRAP_PASSWORD: ${VPNC_BOOTSTRAP_PASSWORD:-dev-password-ok}
       VPNC_TELEMETRY__JSON: "true"
+    # 8080 stays on the container network. Publishing it on the host collides
+    # with Traefik on Coolify. Local host ports: docker-compose.override.yml.
+    expose:
+      - "8080"
     ports:
-      - "8080:8080"
       - "50051:50051"
     depends_on:
       postgres:

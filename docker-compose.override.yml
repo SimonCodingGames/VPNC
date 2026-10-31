@@ -1,0 +1,11 @@
+# Loaded automatically by `docker compose` locally.
+# Coolify invokes `docker compose -f docker-compose.yml` and skips this file.
+
+services:
+  postgres:
+    ports:
+      - "5432:5432"
+
+  control:
+    ports:
+      - "8080:8080"
