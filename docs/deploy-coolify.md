@@ -26,20 +26,22 @@ routet auf Container-Port `8080`.
 
 Dashboard und API laufen unter **derselben Domain** (Static + `/api/*`).
 
-## 3. Pflicht-Umgebungsvariablen
+## 3. Umgebungsvariablen
+
+Postgres startet mit der Compose-Datei automatisch (User/DB/Passwort sind
+**fest in** `docker-compose.coolify.yml`, Port nicht öffentlich). In Coolify
+brauchst du nur:
 
 | Variable | Pflicht | Hinweis |
 |---|---|---|
-| `SERVICE_PASSWORD_POSTGRES` | ja | Coolify Magic; Passwort für Postgres |
-| `VPNC_MASTER_KEY` | ja | `openssl rand -hex 32` (64 Hex-Zeichen) **oder** Base64 von genau 32 Bytes. `SERVICE_BASE64_64_*` ist **nicht** geeignet (ergibt ~48 Bytes). |
-| `VPNC_BOOTSTRAP_EMAIL` | empfohlen beim Erststart | Admin-E-Mail, nur wenn noch keine User existieren |
-| `VPNC_BOOTSTRAP_PASSWORD` | empfohlen beim Erststart | min. 10 Zeichen; nach erstem Login entfernen/rotieren |
-| `VPNC_COOKIE_SECURE` | nein (Default `true`) | hinter HTTPS belassen |
-| `VPNC_TRUST_FORWARDED_HEADERS` | nein (Default `true`) | Traefik setzt `X-Forwarded-*` |
-| `VPNC_PUBLIC_GRPC` | **ja** (Compose) | z. B. `http://DEINE-IP:50051` – Nodes und SSH-Install nutzen diese Adresse |
-| `VPNC_SESSION_HOURS` | nein | Default `24` |
+| `VPNC_MASTER_KEY` | **ja** | `openssl rand -hex 32` — einmalig erzeugen und sichern |
+| `VPNC_PUBLIC_GRPC` | **ja** | z. B. `http://DEINE-IP:50051` (für Nodes / SSH-Install) |
+| `VPNC_BOOTSTRAP_EMAIL` | empfohlen Erststart | Admin-E-Mail |
+| `VPNC_BOOTSTRAP_PASSWORD` | empfohlen Erststart | min. 10 Zeichen |
 
-`SERVICE_FQDN_CONTROL_8080` wird als `VPNC_PUBLIC_URL` durchgereicht (Install-/Doku-Links).
+Optional (Defaults ok): `VPNC_COOKIE_SECURE`, `VPNC_TRUST_FORWARDED_HEADERS`,
+`VPNC_SESSION_HOURS`. Domain: Coolify setzt `SERVICE_FQDN_CONTROL_8080` →
+`VPNC_PUBLIC_URL`.
 
 ## 4. Ports und gRPC
 
