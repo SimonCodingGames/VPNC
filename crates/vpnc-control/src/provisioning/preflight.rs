@@ -15,8 +15,10 @@ pub struct PreflightReport {
     pub wireguard_ok: bool,
     /// Whether required ports appear free.
     pub ports_ok: bool,
-    /// Observed public IP if detected.
+    /// Observed public IPv4 if detected.
     pub public_ip: Option<String>,
+    /// Observed public IPv6 if detected.
+    pub public_ipv6: Option<String>,
     /// Clock skew vs control in seconds, if measured.
     pub clock_skew_secs: Option<i64>,
     /// Human-readable issues.

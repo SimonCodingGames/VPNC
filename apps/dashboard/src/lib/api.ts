@@ -72,6 +72,7 @@ export type Node = {
   role: string;
   status: string;
   public_ip: string | null;
+  public_ipv6: string | null;
   last_seen_at: string | null;
   created_at: string;
 };
@@ -159,7 +160,7 @@ export const api = {
     tunnel_cidr_v6?: string;
   }) => request<Node>('/api/nodes', { method: 'POST', body: JSON.stringify(body) }),
   deleteNode: (id: string) => request<void>(`/api/nodes/${id}`, { method: 'DELETE' }),
-  updateNode: (id: string, body: { public_ip: string }) =>
+  updateNode: (id: string, body: { public_ip?: string; public_ipv6?: string }) =>
     request<Node>(`/api/nodes/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
   createJoinToken: (body: { role: string; node_name?: string; ttl_minutes?: number }) =>
     request<JoinToken>('/api/nodes/join-tokens', {

@@ -1,6 +1,7 @@
 //! Remote installation script and orchestration (fixed scripts only).
 
 use super::binaries::{read_node_binary, resolve_node_binary};
+use super::detect::{detect_public_ips, merge_with_ssh_host, DetectedPublicIps};
 use super::jobs::SshSecrets;
 use super::preflight::PreflightReport;
 use super::ssh::SshSession;
@@ -108,7 +109,19 @@ pub async fn run_preflight(session: &mut SshSession) -> Result<PreflightReport> 
     // Soft check: module may load later; do not block install.
     report.wireguard_ok = true;
     report.ports_ok = true;
+
+    let detected = detect_public_ips(session).await.unwrap_or_default();
+    report.public_ip = detected.ipv4;
+    report.public_ipv6 = detected.ipv6;
+
     Ok(report)
+}
+
+/// Result of a successful remote install (for control-plane bookkeeping).
+#[derive(Debug, Clone, Default)]
+pub struct InstallOutcome {
+    /// Public IPs observed on the host (plus SSH host fallback).
+    pub public_ips: DetectedPublicIps,
 }
 
 /// Full install over SSH.
@@ -119,7 +132,7 @@ pub async fn install_node(
     secrets: &SshSecrets,
     params: &InstallParams<'_>,
     log: &ArcLog,
-) -> Result<()> {
+) -> Result<InstallOutcome> {
     log.line("connecting via SSH…");
     let (mut session, _fp) =
         SshSession::connect(host, port, user, secrets, Some(params.host_key_fp)).await?;
@@ -130,9 +143,16 @@ pub async fn install_node(
         bail!("preflight failed: {}", report.issues.join("; "));
     }
     let arch = report.arch.as_deref().unwrap_or("x86_64");
+    let public_ips = merge_with_ssh_host(
+        DetectedPublicIps {
+            ipv4: report.public_ip.clone(),
+            ipv6: report.public_ipv6.clone(),
+        },
+        host,
+    );
     log.line(&format!(
-        "preflight ok (distro={:?}, arch={arch})",
-        report.distro
+        "preflight ok (distro={:?}, arch={arch}, ipv4={:?}, ipv6={:?})",
+        report.distro, public_ips.ipv4, public_ips.ipv6
     ));
 
     let (bin_path, sha) = resolve_node_binary(params.binaries_dir, arch)?;
@@ -185,7 +205,7 @@ exec /usr/local/bin/vpnc-node run --control \"$CONTROL\" --join-token \"$TOKEN\"
         bail!("install failed (exit {code}): {err} {out}");
     }
     log.line("systemd unit started");
-    Ok(())
+    Ok(InstallOutcome { public_ips })
 }
 
 async fn rollback(session: &mut SshSession) -> Result<()> {

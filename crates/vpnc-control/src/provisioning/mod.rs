@@ -1,6 +1,7 @@
 //! SSH-based node provisioning.
 
 pub mod binaries;
+pub mod detect;
 pub mod install;
 pub mod jobs;
 pub mod preflight;

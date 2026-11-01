@@ -34,6 +34,7 @@
   let busy = $state(false);
   let editIpId = $state<string | null>(null);
   let editIpValue = $state('');
+  let editIp6Value = $state('');
 
   // Wizard
   let host = $state('');
@@ -44,7 +45,7 @@
   let role = $state<Role>('classic');
   let nodeName = $state('');
   let cidrV4 = $state('10.66.0.0/24');
-  let cidrV6 = $state('');
+  let cidrV6 = $state('fd66::/64');
   let job = $state<ProvisioningJob | null>(null);
   let logText = $state('');
   let logEl = $state<HTMLPreElement | null>(null);
@@ -218,23 +219,29 @@
   function startEditIp(n: Node) {
     editIpId = n.id;
     editIpValue = n.public_ip ?? '';
+    editIp6Value = n.public_ipv6 ?? '';
   }
 
   function cancelEditIp() {
     editIpId = null;
     editIpValue = '';
+    editIp6Value = '';
   }
 
   async function savePublicIp(n: Node) {
-    const value = editIpValue.trim();
-    if (!value) {
+    const v4 = editIpValue.trim();
+    const v6 = editIp6Value.trim();
+    if (!v4 && !v6) {
       error = de.nodes.publicIpHint;
       return;
     }
     busy = true;
     error = '';
     try {
-      const updated = await api.updateNode(n.id, { public_ip: value });
+      const updated = await api.updateNode(n.id, {
+        ...(v4 ? { public_ip: v4 } : {}),
+        ...(v6 ? { public_ipv6: v6 } : {})
+      });
       items = items.map((x) => (x.id === n.id ? updated : x));
       toast(de.nodes.publicIpSaved);
       cancelEditIp();
@@ -243,6 +250,11 @@
     } finally {
       busy = false;
     }
+  }
+
+  function formatPublicEndpoints(n: Node): string {
+    const parts = [n.public_ip, n.public_ipv6].filter(Boolean);
+    return parts.length ? parts.join(' · ') : '—';
   }
 
   async function onToken(e: Event) {
@@ -387,7 +399,7 @@
                   <td class="hidden md:table-cell">
                     {#if editIpId === n.id}
                       <form
-                        class="flex items-center gap-1"
+                        class="flex flex-col gap-1"
                         onsubmit={(e) => {
                           e.preventDefault();
                           void savePublicIp(n);
@@ -398,20 +410,31 @@
                           type="text"
                           bind:value={editIpValue}
                           placeholder="203.0.113.10"
-                          title={de.nodes.publicIpHint}
+                          title={de.nodes.publicIp}
                           disabled={busy}
                           aria-label={de.nodes.publicIp}
                         />
-                        <button type="submit" class="btn-icon" disabled={busy} title={de.save}
-                          ><Icon name="check" size={14} /></button
-                        >
-                        <button
-                          type="button"
-                          class="btn-icon"
+                        <input
+                          class="input font-mono text-xs py-1"
+                          type="text"
+                          bind:value={editIp6Value}
+                          placeholder="2001:db8::1"
+                          title={de.nodes.publicIpv6}
                           disabled={busy}
-                          title={de.cancel}
-                          onclick={cancelEditIp}><Icon name="x" size={14} /></button
-                        >
+                          aria-label={de.nodes.publicIpv6}
+                        />
+                        <div class="flex items-center gap-1">
+                          <button type="submit" class="btn-icon" disabled={busy} title={de.save}
+                            ><Icon name="check" size={14} /></button
+                          >
+                          <button
+                            type="button"
+                            class="btn-icon"
+                            disabled={busy}
+                            title={de.cancel}
+                            onclick={cancelEditIp}><Icon name="x" size={14} /></button
+                          >
+                        </div>
                       </form>
                     {:else}
                       <button
@@ -420,7 +443,7 @@
                         title={de.nodes.publicIpHint}
                         onclick={() => startEditIp(n)}
                       >
-                        {n.public_ip ?? '—'}
+                        {formatPublicEndpoints(n)}
                       </button>
                     {/if}
                   </td>

@@ -43,8 +43,10 @@ struct CreateNodeRequest {
 
 #[derive(Debug, Deserialize)]
 struct UpdateNodeRequest {
-    /// Public WireGuard endpoint host (IP or DNS name), without port.
+    /// Public WireGuard endpoint IPv4 or DNS name, without port.
     public_ip: Option<String>,
+    /// Public WireGuard endpoint IPv6, without port.
+    public_ipv6: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -54,6 +56,7 @@ struct NodeResponse {
     role: String,
     status: String,
     public_ip: Option<String>,
+    public_ipv6: Option<String>,
     last_seen_at: Option<String>,
     created_at: String,
 }
@@ -147,6 +150,7 @@ async fn create_node(
             role: body.role.to_string(),
             status: "pending".into(),
             public_ip: None,
+            public_ipv6: None,
             last_seen_at: None,
             created_at: now,
         }),
@@ -173,45 +177,62 @@ async fn update_node(
     Json(body): Json<UpdateNodeRequest>,
 ) -> Result<Json<NodeResponse>, ApiError> {
     require_admin(&actor)?;
-    let Some(public_ip) = body.public_ip.as_ref() else {
-        return Err(ApiError::bad_request("public_ip required"));
-    };
-    let public_ip = public_ip.trim();
-    if public_ip.is_empty() {
-        return Err(ApiError::bad_request("public_ip required"));
+    if body.public_ip.is_none() && body.public_ipv6.is_none() {
+        return Err(ApiError::bad_request("public_ip or public_ipv6 required"));
     }
-    if public_ip.contains(|c: char| c.is_whitespace()) || public_ip.contains('/') {
-        return Err(ApiError::bad_request("public_ip must be a host or IP"));
-    }
-    // Reject host:port forms (IPv4 or bracketed IPv6); bare IPv6 with colons is fine.
-    if public_ip
-        .rsplit_once(':')
-        .is_some_and(|(host, port)| !host.is_empty() && port.parse::<u16>().is_ok())
-        && (public_ip.matches('.').count() == 3 || public_ip.starts_with('['))
+    let public_ip = body
+        .public_ip
+        .as_deref()
+        .map(normalize_endpoint_host)
+        .transpose()
+        .map_err(ApiError::bad_request)?;
+    let public_ipv6 = body
+        .public_ipv6
+        .as_deref()
+        .map(normalize_endpoint_host)
+        .transpose()
+        .map_err(ApiError::bad_request)?;
+    if public_ip.as_ref().is_some_and(|s| s.is_empty())
+        && public_ipv6.as_ref().is_some_and(|s| s.is_empty())
     {
-        return Err(ApiError::bad_request(
-            "public_ip must be a host or IP without port",
-        ));
+        return Err(ApiError::bad_request("public_ip or public_ipv6 required"));
     }
-    let public_ip = public_ip.trim_start_matches('[').trim_end_matches(']');
     let now = Utc::now().to_rfc3339();
     let updated = match &state.db {
-        Db::Sqlite(pool) => sqlx::query("UPDATE nodes SET public_ip = ?, updated_at = ? WHERE id = ?")
-            .bind(public_ip)
-            .bind(&now)
-            .bind(id.to_string())
-            .execute(pool)
-            .await
-            .map(|r| r.rows_affected()),
-        Db::Postgres(pool) => {
-            sqlx::query("UPDATE nodes SET public_ip = $1, updated_at = $2 WHERE id = $3")
-                .bind(public_ip)
-                .bind(&now)
-                .bind(id.to_string())
-                .execute(pool)
-                .await
-                .map(|r| r.rows_affected())
-        }
+        Db::Sqlite(pool) => sqlx::query(
+            r#"
+            UPDATE nodes SET
+              public_ip = COALESCE(?, public_ip),
+              public_ipv6 = COALESCE(?, public_ipv6),
+              public_endpoint_manual = 1,
+              updated_at = ?
+            WHERE id = ?
+            "#,
+        )
+        .bind(public_ip.as_deref().filter(|s| !s.is_empty()))
+        .bind(public_ipv6.as_deref().filter(|s| !s.is_empty()))
+        .bind(&now)
+        .bind(id.to_string())
+        .execute(pool)
+        .await
+        .map(|r| r.rows_affected()),
+        Db::Postgres(pool) => sqlx::query(
+            r#"
+            UPDATE nodes SET
+              public_ip = COALESCE($1, public_ip),
+              public_ipv6 = COALESCE($2, public_ipv6),
+              public_endpoint_manual = 1,
+              updated_at = $3
+            WHERE id = $4
+            "#,
+        )
+        .bind(public_ip.as_deref().filter(|s| !s.is_empty()))
+        .bind(public_ipv6.as_deref().filter(|s| !s.is_empty()))
+        .bind(&now)
+        .bind(id.to_string())
+        .execute(pool)
+        .await
+        .map(|r| r.rows_affected()),
     }
     .map_err(ApiError::internal)?;
     if updated == 0 {
@@ -231,6 +252,23 @@ async fn update_node(
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found("node not found"))
         .map(Json)
+}
+
+fn normalize_endpoint_host(raw: &str) -> Result<String, String> {
+    let s = raw.trim();
+    if s.is_empty() {
+        return Ok(String::new());
+    }
+    if s.contains(|c: char| c.is_whitespace()) || s.contains('/') {
+        return Err("endpoint host must be an IP or DNS name".into());
+    }
+    if s.rsplit_once(':')
+        .is_some_and(|(host, port)| !host.is_empty() && port.parse::<u16>().is_ok())
+        && (s.matches('.').count() == 3 || s.starts_with('['))
+    {
+        return Err("endpoint host must be without port".into());
+    }
+    Ok(s.trim_start_matches('[').trim_end_matches(']').to_string())
 }
 
 async fn delete_node(
@@ -372,12 +410,13 @@ async fn fetch_nodes(
         String,
         Option<String>,
         Option<String>,
+        Option<String>,
         String,
     )> = match db {
         Db::Sqlite(pool) => {
             sqlx::query_as(
                 r#"
-                SELECT id, name, role, status, public_ip, last_seen_at, created_at
+                SELECT id, name, role, status, public_ip, public_ipv6, last_seen_at, created_at
                 FROM nodes
                 WHERE (?1 IS NULL OR role = ?1)
                   AND (?2 IS NULL OR status = ?2)
@@ -395,7 +434,7 @@ async fn fetch_nodes(
         Db::Postgres(pool) => {
             sqlx::query_as(
                 r#"
-                SELECT id, name, role, status, public_ip, last_seen_at, created_at
+                SELECT id, name, role, status, public_ip, public_ipv6, last_seen_at, created_at
                 FROM nodes
                 WHERE ($1::text IS NULL OR role = $1)
                   AND ($2::text IS NULL OR status = $2)
@@ -414,14 +453,17 @@ async fn fetch_nodes(
     Ok(rows
         .into_iter()
         .map(
-            |(id, name, role, status, public_ip, last_seen_at, created_at)| NodeResponse {
-                id,
-                name,
-                role,
-                status,
-                public_ip,
-                last_seen_at,
-                created_at,
+            |(id, name, role, status, public_ip, public_ipv6, last_seen_at, created_at)| {
+                NodeResponse {
+                    id,
+                    name,
+                    role,
+                    status,
+                    public_ip,
+                    public_ipv6,
+                    last_seen_at,
+                    created_at,
+                }
             },
         )
         .collect())
@@ -435,11 +477,12 @@ async fn fetch_node(db: &Db, id: Uuid) -> anyhow::Result<Option<NodeResponse>> {
         String,
         Option<String>,
         Option<String>,
+        Option<String>,
         String,
     )> = match db {
         Db::Sqlite(pool) => {
             sqlx::query_as(
-                "SELECT id, name, role, status, public_ip, last_seen_at, created_at FROM nodes WHERE id = ?",
+                "SELECT id, name, role, status, public_ip, public_ipv6, last_seen_at, created_at FROM nodes WHERE id = ?",
             )
             .bind(id.to_string())
             .fetch_optional(pool)
@@ -447,7 +490,7 @@ async fn fetch_node(db: &Db, id: Uuid) -> anyhow::Result<Option<NodeResponse>> {
         }
         Db::Postgres(pool) => {
             sqlx::query_as(
-                "SELECT id, name, role, status, public_ip, last_seen_at, created_at FROM nodes WHERE id = $1",
+                "SELECT id, name, role, status, public_ip, public_ipv6, last_seen_at, created_at FROM nodes WHERE id = $1",
             )
             .bind(id.to_string())
             .fetch_optional(pool)
@@ -455,14 +498,17 @@ async fn fetch_node(db: &Db, id: Uuid) -> anyhow::Result<Option<NodeResponse>> {
         }
     };
     Ok(row.map(
-        |(id, name, role, status, public_ip, last_seen_at, created_at)| NodeResponse {
-            id,
-            name,
-            role,
-            status,
-            public_ip,
-            last_seen_at,
-            created_at,
+        |(id, name, role, status, public_ip, public_ipv6, last_seen_at, created_at)| {
+            NodeResponse {
+                id,
+                name,
+                role,
+                status,
+                public_ip,
+                public_ipv6,
+                last_seen_at,
+                created_at,
+            }
         },
     ))
 }

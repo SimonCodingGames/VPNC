@@ -6,6 +6,7 @@ use crate::app::AppState;
 use crate::db::Db;
 use crate::services::ipam::IpAllocator;
 use crate::services::users::UserRole;
+use crate::provisioning::detect::format_wg_endpoint;
 use crate::services::wireguard::{
     conf_qr_png, render_client_conf, validate_conf, ClientConfParams, WgKeypair,
 };
@@ -138,20 +139,25 @@ async fn create_profile(
     let mut ipam = load_ipam(&state.db, body.node_id)
         .await
         .map_err(ApiError::internal)?;
-    let v4 = match &node.tunnel_cidr_v4 {
-        Some(cidr) => Some(
-            ipam.allocate_v4(cidr)
-                .map_err(|e| ApiError::bad_request(e.to_string()))?,
-        ),
-        None => None,
-    };
-    let v6 = match &node.tunnel_cidr_v6 {
-        Some(cidr) => Some(
-            ipam.allocate_v6(cidr)
-                .map_err(|e| ApiError::bad_request(e.to_string()))?,
-        ),
-        None => None,
-    };
+    // Always allocate dual-stack unless the node has an explicit empty override later.
+    let cidr_v4 = node
+        .tunnel_cidr_v4
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or("10.66.0.0/24");
+    let cidr_v6 = node
+        .tunnel_cidr_v6
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or("fd66::/64");
+    let v4 = Some(
+        ipam.allocate_v4(cidr_v4)
+            .map_err(|e| ApiError::bad_request(e.to_string()))?,
+    );
+    let v6 = Some(
+        ipam.allocate_v6(cidr_v6)
+            .map_err(|e| ApiError::bad_request(e.to_string()))?,
+    );
 
     let client = WgKeypair::generate();
     let id = Uuid::new_v4();
@@ -230,10 +236,7 @@ async fn download_profile(
     let server_public = node
         .server_public_key
         .ok_or_else(|| ApiError::internal("node missing server public key"))?;
-    let endpoint = node
-        .public_ip
-        .map(|ip| format!("{ip}:51820"))
-        .unwrap_or_else(|| "CHANGE_ME:51820".into());
+    let endpoint = format_wg_endpoint(node.public_ip.as_deref(), node.public_ipv6.as_deref(), 51820);
 
     let conf = render_client_conf(&ClientConfParams {
         client_private_b64: &private,
@@ -319,6 +322,7 @@ struct NodeRow {
     #[allow(dead_code)]
     encrypted_server_private_key: Option<String>,
     public_ip: Option<String>,
+    public_ipv6: Option<String>,
 }
 
 struct ProfileRow {
@@ -354,11 +358,12 @@ async fn fetch_classic_node(db: &Db, id: Uuid) -> anyhow::Result<Option<NodeRow>
         Option<String>,
         Option<String>,
         Option<String>,
+        Option<String>,
         String,
     )> = match db {
         Db::Sqlite(pool) => {
             sqlx::query_as(
-                "SELECT tunnel_cidr_v4, tunnel_cidr_v6, server_public_key, encrypted_server_private_key, public_ip, role FROM nodes WHERE id = ?",
+                "SELECT tunnel_cidr_v4, tunnel_cidr_v6, server_public_key, encrypted_server_private_key, public_ip, public_ipv6, role FROM nodes WHERE id = ?",
             )
             .bind(id.to_string())
             .fetch_optional(pool)
@@ -366,7 +371,7 @@ async fn fetch_classic_node(db: &Db, id: Uuid) -> anyhow::Result<Option<NodeRow>
         }
         Db::Postgres(pool) => {
             sqlx::query_as(
-                "SELECT tunnel_cidr_v4, tunnel_cidr_v6, server_public_key, encrypted_server_private_key, public_ip, role FROM nodes WHERE id = $1",
+                "SELECT tunnel_cidr_v4, tunnel_cidr_v6, server_public_key, encrypted_server_private_key, public_ip, public_ipv6, role FROM nodes WHERE id = $1",
             )
             .bind(id.to_string())
             .fetch_optional(pool)
@@ -374,12 +379,13 @@ async fn fetch_classic_node(db: &Db, id: Uuid) -> anyhow::Result<Option<NodeRow>
         }
     };
     Ok(match row {
-        Some((v4, v6, pubk, enc, ip, role)) if role == "classic" => Some(NodeRow {
+        Some((v4, v6, pubk, enc, ip, ip6, role)) if role == "classic" => Some(NodeRow {
             tunnel_cidr_v4: v4,
             tunnel_cidr_v6: v6,
             server_public_key: pubk,
             encrypted_server_private_key: enc,
             public_ip: ip,
+            public_ipv6: ip6,
         }),
         Some(_) => None,
         None => None,

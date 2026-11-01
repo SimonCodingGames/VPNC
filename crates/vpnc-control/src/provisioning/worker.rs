@@ -1,5 +1,6 @@
 //! Background worker that runs confirmed provisioning jobs.
 
+use super::detect::DetectedPublicIps;
 use super::install::{install_node, wait_until, ArcLog, InstallParams};
 use super::jobs::{JobStatus, ProvisioningService};
 use super::secrets::SecretStore;
@@ -109,16 +110,28 @@ async fn tick(
     drop(ssh_secrets);
     secrets.clear(job_id);
 
-    if let Err(err) = install_result {
-        let msg = sanitize_error(&err.to_string());
-        log.line(&format!("failed: {msg}"));
-        svc.finish(job_id, JobStatus::Failed, Some(&msg)).await?;
-        return Ok(());
-    }
+    let outcome = match install_result {
+        Ok(o) => o,
+        Err(err) => {
+            let msg = sanitize_error(&err.to_string());
+            log.line(&format!("failed: {msg}"));
+            svc.finish(job_id, JobStatus::Failed, Some(&msg)).await?;
+            return Ok(());
+        }
+    };
 
     let name = job.node_name.clone();
-    let cidr_v4 = job.tunnel_cidr_v4.clone();
-    let cidr_v6 = job.tunnel_cidr_v6.clone();
+    // Defaults when the admin left tunnel CIDRs empty in the wizard.
+    let cidr_v4 = job
+        .tunnel_cidr_v4
+        .clone()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "10.66.0.0/24".into());
+    let cidr_v6 = job
+        .tunnel_cidr_v6
+        .clone()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "fd66::/64".into());
     let db = svc.db().clone();
     let wait = wait_until(
         || {
@@ -137,19 +150,13 @@ async fn tick(
         return Ok(());
     }
 
-    if let Err(err) = apply_cidrs(
-        svc.db(),
-        name.as_deref(),
-        cidr_v4.as_deref(),
-        cidr_v6.as_deref(),
-    )
-    .await
+    if let Err(err) = apply_cidrs(svc.db(), name.as_deref(), Some(&cidr_v4), Some(&cidr_v6)).await
     {
         log.line(&format!("warning: could not set tunnel CIDR: {err}"));
     }
 
-    if let Err(err) = apply_public_ip(svc.db(), name.as_deref(), &job.host).await {
-        log.line(&format!("warning: could not set public_ip: {err}"));
+    if let Err(err) = apply_public_ips(svc.db(), name.as_deref(), &outcome.public_ips).await {
+        log.line(&format!("warning: could not set public IPs: {err}"));
     }
 
     svc.finish(job_id, JobStatus::Succeeded, None).await?;
@@ -253,7 +260,7 @@ async fn apply_cidrs(
     match db {
         Db::Sqlite(pool) => {
             sqlx::query(
-                "UPDATE nodes SET tunnel_cidr_v4 = COALESCE(?, tunnel_cidr_v4), tunnel_cidr_v6 = COALESCE(?, tunnel_cidr_v6), updated_at = ? WHERE name = ?",
+                "UPDATE nodes SET tunnel_cidr_v4 = COALESCE(tunnel_cidr_v4, ?), tunnel_cidr_v6 = COALESCE(tunnel_cidr_v6, ?), updated_at = ? WHERE name = ?",
             )
             .bind(v4)
             .bind(v6)
@@ -264,7 +271,7 @@ async fn apply_cidrs(
         }
         Db::Postgres(pool) => {
             sqlx::query(
-                "UPDATE nodes SET tunnel_cidr_v4 = COALESCE($1, tunnel_cidr_v4), tunnel_cidr_v6 = COALESCE($2, tunnel_cidr_v6), updated_at = $3 WHERE name = $4",
+                "UPDATE nodes SET tunnel_cidr_v4 = COALESCE(tunnel_cidr_v4, $1), tunnel_cidr_v6 = COALESCE(tunnel_cidr_v6, $2), updated_at = $3 WHERE name = $4",
             )
             .bind(v4)
             .bind(v6)
@@ -277,24 +284,35 @@ async fn apply_cidrs(
     Ok(())
 }
 
-async fn apply_public_ip(db: &Db, name: Option<&str>, host: &str) -> anyhow::Result<()> {
+async fn apply_public_ips(
+    db: &Db,
+    name: Option<&str>,
+    ips: &DetectedPublicIps,
+) -> anyhow::Result<()> {
     let Some(name) = name.filter(|s| !s.is_empty()) else {
         return Ok(());
     };
-    let host = host.trim();
-    if host.is_empty() {
-        return Ok(());
-    }
-    // Strip brackets from IPv6 literals; never store a port here.
-    let host = host.trim_start_matches('[').trim_end_matches(']');
-    let host = host.split('%').next().unwrap_or(host);
     let now = Utc::now().to_rfc3339();
+    // Only fill empty fields, and never overwrite admin edits (public_endpoint_manual=1).
     match db {
         Db::Sqlite(pool) => {
             sqlx::query(
-                "UPDATE nodes SET public_ip = COALESCE(public_ip, ?), updated_at = ? WHERE name = ?",
+                r#"
+                UPDATE nodes SET
+                  public_ip = CASE
+                    WHEN COALESCE(public_endpoint_manual, 0) = 1 THEN public_ip
+                    ELSE COALESCE(?, public_ip)
+                  END,
+                  public_ipv6 = CASE
+                    WHEN COALESCE(public_endpoint_manual, 0) = 1 THEN public_ipv6
+                    ELSE COALESCE(?, public_ipv6)
+                  END,
+                  updated_at = ?
+                WHERE name = ?
+                "#,
             )
-            .bind(host)
+            .bind(ips.ipv4.as_deref())
+            .bind(ips.ipv6.as_deref())
             .bind(&now)
             .bind(name)
             .execute(pool)
@@ -302,9 +320,22 @@ async fn apply_public_ip(db: &Db, name: Option<&str>, host: &str) -> anyhow::Res
         }
         Db::Postgres(pool) => {
             sqlx::query(
-                "UPDATE nodes SET public_ip = COALESCE(public_ip, $1), updated_at = $2 WHERE name = $3",
+                r#"
+                UPDATE nodes SET
+                  public_ip = CASE
+                    WHEN COALESCE(public_endpoint_manual, 0) = 1 THEN public_ip
+                    ELSE COALESCE($1, public_ip)
+                  END,
+                  public_ipv6 = CASE
+                    WHEN COALESCE(public_endpoint_manual, 0) = 1 THEN public_ipv6
+                    ELSE COALESCE($2, public_ipv6)
+                  END,
+                  updated_at = $3
+                WHERE name = $4
+                "#,
             )
-            .bind(host)
+            .bind(ips.ipv4.as_deref())
+            .bind(ips.ipv6.as_deref())
             .bind(&now)
             .bind(name)
             .execute(pool)

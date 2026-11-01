@@ -251,7 +251,9 @@
               <li class="flex items-center gap-3 px-5 py-3">
                 <div class="min-w-0 flex-1">
                   <p class="truncate font-mono text-sm font-medium">{n.name}</p>
-                  <p class="text-xs text-ink-500">{n.public_ip ?? '—'}</p>
+                  <p class="text-xs text-ink-500">
+                    {[n.public_ip, n.public_ipv6].filter(Boolean).join(' · ') || '—'}
+                  </p>
                 </div>
                 <Badge tone={roleTone(n.role)}>{n.role}</Badge>
                 <StatusBadge status={n.status} />
