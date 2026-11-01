@@ -522,10 +522,11 @@ async fn fetch_profiles(
     limit: i64,
 ) -> anyhow::Result<Vec<ProfileListItem>> {
     // Join devices for ownership filtering.
+    // `node_id` is nullable (ON DELETE SET NULL) — must decode as Option or list fails.
     let rows: Vec<(
         String,
         String,
-        String,
+        Option<String>,
         String,
         Option<String>,
         Option<String>,
@@ -592,7 +593,7 @@ async fn fetch_profiles(
             )| ProfileListItem {
                 id,
                 device_id,
-                node_id: Some(node_id),
+                node_id,
                 kind,
                 client_public_key,
                 assigned_ipv4,

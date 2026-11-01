@@ -62,7 +62,9 @@ impl Db {
                 .run(&pool)
                 .await
                 .context("sqlite migrations")?;
-            Ok(Self::Sqlite(pool))
+            let db = Self::Sqlite(pool);
+            db.ensure_node_endpoint_columns().await?;
+            Ok(db)
         } else if database_url.starts_with("postgres://")
             || database_url.starts_with("postgresql://")
         {
@@ -76,10 +78,45 @@ impl Db {
                 .run(&pool)
                 .await
                 .context("postgres migrations")?;
-            Ok(Self::Postgres(pool))
+            let db = Self::Postgres(pool);
+            db.ensure_node_endpoint_columns().await?;
+            Ok(db)
         } else {
             bail!("unsupported database URL (expected sqlite: or postgres://): {database_url}");
         }
+    }
+
+    /// Idempotent schema guards for endpoint columns (survives partial deploys).
+    async fn ensure_node_endpoint_columns(&self) -> anyhow::Result<()> {
+        match self {
+            Db::Sqlite(pool) => {
+                let _ = sqlx::query(
+                    "ALTER TABLE nodes ADD COLUMN public_ipv6 TEXT",
+                )
+                .execute(pool)
+                .await;
+                let _ = sqlx::query(
+                    "ALTER TABLE nodes ADD COLUMN public_endpoint_manual INTEGER NOT NULL DEFAULT 0",
+                )
+                .execute(pool)
+                .await;
+            }
+            Db::Postgres(pool) => {
+                sqlx::query(
+                    "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS public_ipv6 TEXT",
+                )
+                .execute(pool)
+                .await
+                .context("ensure public_ipv6")?;
+                sqlx::query(
+                    "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS public_endpoint_manual INTEGER NOT NULL DEFAULT 0",
+                )
+                .execute(pool)
+                .await
+                .context("ensure public_endpoint_manual")?;
+            }
+        }
+        Ok(())
     }
 
     /// Returns the number of users (for bootstrap checks).

@@ -107,4 +107,11 @@ mod tests {
         let a = ipam.allocate_v6("fd00::/127").unwrap();
         assert_ne!(a, std::net::Ipv6Addr::UNSPECIFIED);
     }
+
+    #[test]
+    fn allocates_default_ula() {
+        let mut ipam = IpAllocator::new();
+        let a = ipam.allocate_v6("fd66::/64").expect("fd66::/64");
+        assert_ne!(a, std::net::Ipv6Addr::UNSPECIFIED);
+    }
 }

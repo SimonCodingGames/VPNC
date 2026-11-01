@@ -33,18 +33,26 @@
 
   async function load() {
     error = '';
+    const errors: string[] = [];
     try {
-      const [p, d, n] = await Promise.all([api.listProfiles(), api.listDevices(), api.listNodes()]);
-      profiles = p.items;
-      devices = d.items;
-      nodes = n.items;
+      profiles = (await api.listProfiles()).items;
+    } catch (e) {
+      errors.push(e instanceof ApiError ? e.message : de.genericError);
+    }
+    try {
+      devices = (await api.listDevices()).items;
       if (!deviceId && devices[0]) deviceId = devices[0].id;
+    } catch (e) {
+      errors.push(e instanceof ApiError ? e.message : de.genericError);
+    }
+    try {
+      nodes = (await api.listNodes()).items;
       if (!nodeId && nodes[0]) nodeId = nodes[0].id;
     } catch (e) {
-      error = e instanceof ApiError ? e.message : de.genericError;
-    } finally {
-      loaded = true;
+      errors.push(e instanceof ApiError ? e.message : de.genericError);
     }
+    if (errors.length) error = errors[0] ?? de.genericError;
+    loaded = true;
   }
 
   onMount(() => {
