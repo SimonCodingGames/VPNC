@@ -129,7 +129,7 @@ impl ProvisioningService {
                 )
                 .bind(id.to_string())
                 .bind(host)
-                .bind(i64::from(ssh_port))
+                .bind(i32::from(ssh_port))
                 .bind(ssh_user)
                 .bind(role)
                 .bind(node_name)
@@ -154,7 +154,7 @@ impl ProvisioningService {
                 )
                 .bind(id.to_string())
                 .bind(host)
-                .bind(i64::from(ssh_port))
+                .bind(i32::from(ssh_port))
                 .bind(ssh_user)
                 .bind(role)
                 .bind(node_name)
@@ -262,11 +262,12 @@ impl ProvisioningService {
 }
 
 async fn fetch_job(db: &Db, id: Uuid) -> anyhow::Result<Option<ProvisioningJob>> {
+    // ssh_port is SQL INTEGER (Postgres INT4) — decode as i32, not i64.
     let row: Option<(
         String,
         String,
         String,
-        i64,
+        i32,
         String,
         String,
         Option<String>,
@@ -309,7 +310,7 @@ fn map_job(
         String,
         String,
         String,
-        i64,
+        i32,
         String,
         String,
         Option<String>,
@@ -359,7 +360,7 @@ async fn fetch_jobs(
         String,
         String,
         String,
-        i64,
+        i32,
         String,
         String,
         Option<String>,
