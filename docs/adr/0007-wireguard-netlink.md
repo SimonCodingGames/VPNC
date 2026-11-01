@@ -5,7 +5,9 @@ Status: angenommen (Schritt 7)
 vpnc-node muss WireGuard-Interfaces und Peers idempotent verwalten.
 
 ## Entscheidung
-Primär: Crate `wireguard-control` (bzw. netlink-basiert) für Kernel-WireGuard.
-Fallback: `boringtun` Userspace, wenn kein Kernelmodul verfügbar.
-Die konkrete Crate-Version wird in `crates/vpnc-node` gepinnt und kann ohne
-Schema-Migration gewechselt werden.
+Primär: Kernel-WireGuard über Netlink. Umsetzung in `vpnc-node` mit den
+festen Tools `ip` und `wg setconf` (Argumentliste, keine Shell-Strings) — das
+ist netlink-basiert und vermeidet C-Library-Linking im Cross-Build.
+Optional später: Crate `wireguard-control` als Direktbindung.
+Fallback: `boringtun` Userspace, wenn kein Kernelmodul verfügbar (Apply dann
+Userspace-Pfad; derzeit wird Kernel bevorzugt und `wg` verlangt).

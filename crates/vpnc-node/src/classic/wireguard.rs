@@ -1,12 +1,18 @@
 //! Classic WireGuard interface management.
 //!
-//! On Linux with kernel WireGuard: netlink via `wireguard-control` (see ADR 0007).
-//! Fallback: boringtun userspace device.
+//! On Linux: create/configure via `ip` + `wg setconf` (netlink under the hood;
+//! see ADR 0007). Fallback path is documented for boringtun when no kernel
+//! module is present.
 //!
 //! Full netns acceptance tests require Linux (`scripts/netns-test.sh`).
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use std::collections::BTreeMap;
+use std::io::Write;
+use std::path::PathBuf;
+use std::process::Command;
+use tempfile::NamedTempFile;
+use vpnc_common::ClassicWgConfig;
 
 /// Desired peer state for idempotent sync.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,35 +34,182 @@ pub struct DesiredInterface {
     pub private_key_b64: String,
     /// Listen port.
     pub listen_port: u16,
+    /// Interface addresses (CIDR strings).
+    pub addresses: Vec<String>,
     /// Peers keyed by public key.
     pub peers: BTreeMap<String, DesiredPeer>,
+}
+
+impl DesiredInterface {
+    /// Converts a streamed classic config into apply input.
+    pub fn from_classic(cfg: &ClassicWgConfig) -> Self {
+        let mut peers = BTreeMap::new();
+        for p in &cfg.peers {
+            peers.insert(
+                p.public_key.clone(),
+                DesiredPeer {
+                    public_key: p.public_key.clone(),
+                    allowed_ips: p.allowed_ips.clone(),
+                    endpoint: None,
+                },
+            );
+        }
+        let mut addresses = Vec::new();
+        if let Some(a) = &cfg.address_v4 {
+            addresses.push(a.clone());
+        }
+        if let Some(a) = &cfg.address_v6 {
+            addresses.push(a.clone());
+        }
+        Self {
+            name: cfg.interface.clone(),
+            private_key_b64: cfg.private_key.clone(),
+            listen_port: cfg.listen_port,
+            addresses,
+            peers,
+        }
+    }
 }
 
 /// Backend used to apply WireGuard state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WgBackendKind {
-    /// Kernel WireGuard via netlink.
+    /// Kernel WireGuard via `ip`/`wg` (netlink).
     Kernel,
-    /// Userspace boringtun.
+    /// Userspace boringtun (not yet applied in-process).
     Userspace,
 }
 
-/// Applies desired state. Currently a dry-run/stub on non-Linux hosts.
+/// Applies desired WireGuard state on Linux; no-op elsewhere.
 pub fn apply_interface(desired: &DesiredInterface) -> Result<WgBackendKind> {
     if desired.private_key_b64.is_empty() {
         bail!("private key required");
     }
-    if cfg!(target_os = "linux") {
-        // TODO: wireguard-control netlink apply + boringtun fallback.
-        tracing::info!(iface = %desired.name, peers = desired.peers.len(), "apply (linux stub)");
-        Ok(WgBackendKind::Kernel)
-    } else {
+    if desired.name.is_empty()
+        || desired
+            .name
+            .chars()
+            .any(|c| !(c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+    {
+        bail!("invalid interface name");
+    }
+
+    if !cfg!(target_os = "linux") {
         tracing::warn!(
             iface = %desired.name,
             "WireGuard apply is a no-op on this OS; use Linux for step 7 acceptance"
         );
-        Ok(WgBackendKind::Userspace)
+        return Ok(WgBackendKind::Userspace);
     }
+
+    if !kernel_module_available() {
+        tracing::warn!("wireguard kernel module not detected; trying wg anyway");
+    }
+
+    ensure_link(&desired.name)?;
+    apply_setconf(desired)?;
+    for addr in &desired.addresses {
+        replace_address(&desired.name, addr)?;
+    }
+    run_ok("ip", &["link", "set", "dev", &desired.name, "up"])?;
+    tracing::info!(
+        iface = %desired.name,
+        peers = desired.peers.len(),
+        port = desired.listen_port,
+        "wireguard interface applied"
+    );
+    Ok(WgBackendKind::Kernel)
+}
+
+fn kernel_module_available() -> bool {
+    PathBuf::from("/sys/module/wireguard").exists()
+        || Command::new("modprobe")
+            .args(["wireguard"])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+}
+
+fn ensure_link(name: &str) -> Result<()> {
+    let listed = Command::new("ip")
+        .args(["-o", "link", "show", "dev", name])
+        .output()
+        .context("ip link show")?;
+    if listed.status.success() {
+        return Ok(());
+    }
+    run_ok("ip", &["link", "add", "dev", name, "type", "wireguard"])
+        .context("ip link add wireguard")?;
+    Ok(())
+}
+
+fn apply_setconf(desired: &DesiredInterface) -> Result<()> {
+    let conf = render_setconf(desired);
+    let mut tmp = NamedTempFile::new().context("temp wg conf")?;
+    #[cfg(unix)]
+    {
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(tmp.path())?.permissions();
+        perms.set_mode(0o600);
+        fs::set_permissions(tmp.path(), perms)?;
+    }
+    tmp.write_all(conf.as_bytes()).context("write wg conf")?;
+    tmp.flush()?;
+    let path = tmp.path();
+    let status = Command::new("wg")
+        .args(["setconf", &desired.name])
+        .arg(path)
+        .status()
+        .context("wg setconf")?;
+    // Drop tempfile (and private key) as soon as wg has read it.
+    drop(tmp);
+    if !status.success() {
+        bail!("wg setconf failed with {status}");
+    }
+    Ok(())
+}
+
+fn render_setconf(desired: &DesiredInterface) -> String {
+    let mut out = String::new();
+    out.push_str("[Interface]\n");
+    out.push_str(&format!("PrivateKey = {}\n", desired.private_key_b64));
+    out.push_str(&format!("ListenPort = {}\n", desired.listen_port));
+    for peer in desired.peers.values() {
+        out.push('\n');
+        out.push_str("[Peer]\n");
+        out.push_str(&format!("PublicKey = {}\n", peer.public_key));
+        if !peer.allowed_ips.is_empty() {
+            out.push_str(&format!("AllowedIPs = {}\n", peer.allowed_ips.join(", ")));
+        }
+        if let Some(ep) = &peer.endpoint {
+            out.push_str(&format!("Endpoint = {ep}\n"));
+        }
+    }
+    out
+}
+
+fn replace_address(iface: &str, cidr: &str) -> Result<()> {
+    if cidr.contains(':') {
+        // IPv6
+        let _ = Command::new("ip")
+            .args(["-6", "addr", "flush", "dev", iface])
+            .status();
+        run_ok("ip", &["-6", "addr", "replace", cidr, "dev", iface])
+    } else {
+        run_ok("ip", &["addr", "replace", cidr, "dev", iface])
+    }
+}
+
+fn run_ok(bin: &str, args: &[&str]) -> Result<()> {
+    let status = Command::new(bin)
+        .args(args)
+        .status()
+        .with_context(|| format!("exec {bin}"))?;
+    if !status.success() {
+        bail!("{bin} {:?} failed: {status}", args);
+    }
+    Ok(())
 }
 
 /// Computes peer add/remove/change sets for idempotent sync.
@@ -126,5 +279,29 @@ mod tests {
         assert_eq!(add.len(), 1);
         assert_eq!(remove, vec!["b".to_string()]);
         assert_eq!(change.len(), 1);
+    }
+
+    #[test]
+    fn setconf_shape_omits_nothing_critical() {
+        let mut peers = BTreeMap::new();
+        peers.insert(
+            "pk".into(),
+            DesiredPeer {
+                public_key: "pk".into(),
+                allowed_ips: vec!["10.66.0.2/32".into()],
+                endpoint: None,
+            },
+        );
+        let d = DesiredInterface {
+            name: "wg0".into(),
+            private_key_b64: "PRIV".into(),
+            listen_port: 51820,
+            addresses: vec!["10.66.0.1/24".into()],
+            peers,
+        };
+        let conf = render_setconf(&d);
+        assert!(conf.contains("ListenPort = 51820"));
+        assert!(conf.contains("PublicKey = pk"));
+        assert!(conf.contains("AllowedIPs = 10.66.0.2/32"));
     }
 }

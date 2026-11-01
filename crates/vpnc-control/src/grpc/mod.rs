@@ -1,5 +1,6 @@
 //! gRPC services for nodes and clients.
 
+pub mod classic_config;
 pub mod node;
 
 pub use node::{NodeGrpcService, NodeRuntimeState};

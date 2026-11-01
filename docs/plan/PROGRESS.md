@@ -7,7 +7,7 @@
 - [x] Schritt 4 – vpnc-control: Benutzer, Geräte, Nodes, Audit
 - [x] Schritt 5 – Classic-WireGuard-Profile
 - [x] Schritt 6 – gRPC: Node-Registrierung und Config-Stream
-- [ ] Schritt 7 – vpnc-node: Rolle `classic` für WireGuard (Struktur + Diff-Tests; Kernel-Apply/netns offen)
+- [x] Schritt 7 – vpnc-node: Rolle `classic` für WireGuard (Config-Stream mit Key+Peers, `ip`/`wg setconf`, nft `vpnc`, IPAM Gateway reserviert; netns-Skript vorhanden)
 - [x] Schritt 8 – Node-Provisioning per SSH (Backend: API, russh, Install, Worker, Secrets-Tests)
 - [ ] Schritt 9 – OpenVPN Classic
 - [x] Schritt 10 – Dashboard: Grundgerüst (Login, Static-Serve durch Control, Hell/Dunkel)
@@ -23,7 +23,7 @@
 - [x] Login unter derselben Domain wie `/api`
 - [x] Server-Assistent im Dashboard (IP + SSH → Host-Key → Install)
 - [ ] E2E auf Linux: Job succeeded → Node online (braucht erreichbaren SSH-Host + Binary)
-- [ ] Gerät + WireGuard-Profil → Import in offizielle App (braucht Schritt 7 Kernel-WG)
+- [ ] Gerät + WireGuard-Profil → Import in offizielle App (nach Redeploy + UDP 51820 + neuem Profil)
 - [x] Kein manuelles Einloggen auf dem Node nötig (Primärpfad)
 
 ## Notizen
@@ -34,8 +34,11 @@
 - Binary-Store: `VPNC_NODE_BINARIES_DIR` (`linux-amd64/vpnc-node` im Image).
 - SSH-E2E gegen echten Host: auf Linux/Coolify manuell; Unit-Tests für Secrets/Host-Key.
 
-### Schritt 7 (offen für Tunnel)
-- Node registriert sich; WireGuard-Interface/nft Apply noch nicht produktiv.
+### Schritt 7
+- Control baut Classic-Config (Private Key entschlüsselt, Peers aus Profilen).
+- Node wendet `wg0` per `wg setconf` + Adressen/`ip link` an; nft-Tabelle `vpnc` + Forwarding.
+- Gateway `.1` / erster IPv6-Host für Server reserviert; Clients ab `.2`.
+- Offen: Live-E2E auf dem provisionierten Host (Firewall UDP 51820, neues Profil nach Redeploy).
 
 ### Blocker / Entscheidungen nötig
 - **Schritt 15:** ADR 0005 – OpenVPN-Client-Lizenz.

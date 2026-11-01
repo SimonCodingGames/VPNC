@@ -9,12 +9,15 @@ mod pb {
 }
 
 use anyhow::Context;
+use classic::nat::{ensure_ip_forward, ensure_masquerade};
+use classic::wireguard::{apply_interface, DesiredInterface};
 use clap::{Parser, Subcommand};
 use pb::node::node_service_client::NodeServiceClient;
 use pb::node::{HealthReport, RegisterRequest, StreamConfigRequest};
 use std::collections::HashMap;
 use std::time::Duration;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
+use vpnc_common::ClassicWgConfig;
 
 #[derive(Debug, Parser)]
 #[command(name = "vpnc-node", about = "VPNC node daemon")]
@@ -94,15 +97,23 @@ async fn run(control: &str, join_token: &str, name: &str, role: &str) -> anyhow:
                     info!(
                         version = update.version,
                         full = update.full_snapshot,
+                        payload_len = update.payload.len(),
                         "config update"
                     );
-                    version = update.version;
-                    let _ = client
-                        .ack_config(pb::node::AckConfigRequest {
-                            node_id: reg.node_id.clone(),
-                            applied_version: version,
-                        })
-                        .await;
+                    match apply_config_payload(&update.payload) {
+                        Ok(()) => {
+                            version = update.version;
+                            let _ = client
+                                .ack_config(pb::node::AckConfigRequest {
+                                    node_id: reg.node_id.clone(),
+                                    applied_version: version,
+                                })
+                                .await;
+                        }
+                        Err(err) => {
+                            error!(error = %err, "failed to apply config");
+                        }
+                    }
                 }
             }
             Err(err) => {
@@ -120,6 +131,30 @@ async fn run(control: &str, join_token: &str, name: &str, role: &str) -> anyhow:
             .await;
         tokio::time::sleep(Duration::from_secs(5)).await;
     }
+}
+
+fn apply_config_payload(payload: &[u8]) -> anyhow::Result<()> {
+    let cfg: ClassicWgConfig =
+        serde_json::from_slice(payload).context("parse classic config JSON")?;
+    if cfg.role != "classic" {
+        warn!(role = %cfg.role, "ignoring non-classic config");
+        return Ok(());
+    }
+    let desired = DesiredInterface::from_classic(&cfg);
+    apply_interface(&desired)?;
+
+    ensure_ip_forward()?;
+    let mut cidrs: Vec<&str> = Vec::new();
+    if let Some(c) = cfg.tunnel_cidr_v4.as_deref() {
+        cidrs.push(c);
+    }
+    if let Some(c) = cfg.tunnel_cidr_v6.as_deref() {
+        cidrs.push(c);
+    }
+    if !cidrs.is_empty() {
+        ensure_masquerade(&cfg.interface, &cidrs)?;
+    }
+    Ok(())
 }
 
 fn jitter_backoff() -> Duration {

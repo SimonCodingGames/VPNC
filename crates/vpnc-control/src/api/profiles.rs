@@ -150,6 +150,16 @@ async fn create_profile(
         .as_deref()
         .filter(|s| !s.is_empty())
         .unwrap_or("fd66::/64");
+    let _ = ipam
+        .reserve_gateway_v4(cidr_v4)
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    let _ = ipam
+        .reserve_gateway_v6(cidr_v6)
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    // Persist default CIDRs on the node so the config stream can NAT correctly.
+    ensure_node_cidrs(&state.db, body.node_id, cidr_v4, cidr_v6)
+        .await
+        .map_err(ApiError::internal)?;
     let v4 = Some(
         ipam.allocate_v4(cidr_v4)
             .map_err(|e| ApiError::bad_request(e.to_string()))?,
@@ -432,6 +442,40 @@ async fn ensure_server_keypair(
         }
     }
     Ok(pub_b64)
+}
+
+async fn ensure_node_cidrs(
+    db: &Db,
+    node_id: Uuid,
+    cidr_v4: &str,
+    cidr_v6: &str,
+) -> anyhow::Result<()> {
+    let now = Utc::now().to_rfc3339();
+    match db {
+        Db::Sqlite(pool) => {
+            sqlx::query(
+                "UPDATE nodes SET tunnel_cidr_v4 = COALESCE(tunnel_cidr_v4, ?), tunnel_cidr_v6 = COALESCE(tunnel_cidr_v6, ?), updated_at = ? WHERE id = ?",
+            )
+            .bind(cidr_v4)
+            .bind(cidr_v6)
+            .bind(&now)
+            .bind(node_id.to_string())
+            .execute(pool)
+            .await?;
+        }
+        Db::Postgres(pool) => {
+            sqlx::query(
+                "UPDATE nodes SET tunnel_cidr_v4 = COALESCE(tunnel_cidr_v4, $1), tunnel_cidr_v6 = COALESCE(tunnel_cidr_v6, $2), updated_at = $3 WHERE id = $4",
+            )
+            .bind(cidr_v4)
+            .bind(cidr_v6)
+            .bind(&now)
+            .bind(node_id.to_string())
+            .execute(pool)
+            .await?;
+        }
+    }
+    Ok(())
 }
 
 async fn load_ipam(db: &Db, node_id: Uuid) -> anyhow::Result<IpAllocator> {

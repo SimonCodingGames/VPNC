@@ -12,6 +12,12 @@ use std::time::Duration;
 
 const INSTALL_SH: &str = r#"#!/bin/bash
 set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+if command -v apt-get >/dev/null 2>&1; then
+  apt-get update -qq
+  apt-get install -y -qq wireguard-tools iproute2 nftables
+fi
+modprobe wireguard 2>/dev/null || true
 install -d -m 755 /usr/local/bin /etc/vpnc
 install -m 755 /tmp/vpnc-node-new /usr/local/bin/vpnc-node
 install -m 755 /tmp/vpnc-node-run.sh /usr/local/bin/vpnc-node-run
@@ -32,7 +38,8 @@ rm -f /tmp/vpnc-node-new /tmp/vpnc-node.toml /tmp/vpnc-node.service /tmp/vpnc-no
 const SERVICE_UNIT: &str =
     "[Unit]\nDescription=VPNC node\nAfter=network-online.target\nWants=network-online.target\n\n\
 [Service]\nType=simple\nExecStart=/usr/local/bin/vpnc-node-run\nRestart=on-failure\nRestartSec=5\n\
-AmbientCapabilities=CAP_NET_ADMIN\nCapabilityBoundingSet=CAP_NET_ADMIN\n\n\
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW\nCapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW\n\
+# Root so nft/ip/wg can manage interfaces without capability gaps.\n\n\
 [Install]\nWantedBy=multi-user.target\n";
 
 /// Parameters for a remote install (no SSH secrets).

@@ -1,11 +1,13 @@
 //! NodeService implementation.
 
 use crate::db::Db;
+use crate::grpc::classic_config::build_classic_config;
 use crate::grpc::pb::node::node_service_server::NodeService;
 use crate::grpc::pb::node::{
     AckConfigRequest, AckConfigResponse, ConfigUpdate, HealthAck, HealthReport, PeerLocationAck,
     PeerLocationReport, RegisterRequest, RegisterResponse, StreamConfigRequest,
 };
+use crate::services::crypto::CryptoService;
 use chrono::{Duration, Utc};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -62,6 +64,7 @@ impl NodeRuntimeState {
         }
     }
 
+    #[allow(dead_code)]
     fn current_version(&self, node_id: &str) -> u64 {
         let mut guard = self.inner.lock().expect("node runtime");
         let entry = guard.entry(node_id.to_string()).or_insert(NodeLive {
@@ -71,18 +74,30 @@ impl NodeRuntimeState {
         });
         entry.config_version
     }
+
+    fn set_version(&self, node_id: &str, version: u64) {
+        let mut guard = self.inner.lock().expect("node runtime");
+        let entry = guard.entry(node_id.to_string()).or_insert(NodeLive {
+            last_seen: Utc::now(),
+            config_version: version,
+            applied_version: 0,
+        });
+        entry.config_version = version;
+        entry.last_seen = Utc::now();
+    }
 }
 
 /// gRPC NodeService backed by the control database.
 pub struct NodeGrpcService {
     db: Db,
     runtime: NodeRuntimeState,
+    crypto: CryptoService,
 }
 
 impl NodeGrpcService {
     /// Creates the service.
-    pub fn new(db: Db, runtime: NodeRuntimeState) -> Self {
-        Self { db, runtime }
+    pub fn new(db: Db, runtime: NodeRuntimeState, crypto: CryptoService) -> Self {
+        Self { db, runtime, crypto }
     }
 }
 
@@ -212,13 +227,24 @@ impl NodeService for NodeGrpcService {
     ) -> Result<Response<Self::StreamConfigStream>, Status> {
         let req = request.into_inner();
         self.runtime.touch(&req.node_id);
-        let version = self.runtime.current_version(&req.node_id);
+
+        let cfg = build_classic_config(&self.db, &self.crypto, &req.node_id)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, node_id = %req.node_id, "build classic config failed");
+                Status::internal("config build failed")
+            })?;
+        let version = cfg.content_version();
+        self.runtime.set_version(&req.node_id, version);
+        let payload = serde_json::to_vec(&cfg).map_err(|e| Status::internal(e.to_string()))?;
+        // Never log payload — it contains the server private key.
+
         let (tx, rx) = mpsc::channel(4);
-        let full = req.last_applied_version == 0 || req.last_applied_version < version;
+        let full = req.last_applied_version == 0 || req.last_applied_version != version;
         let update = ConfigUpdate {
             version,
             full_snapshot: full,
-            payload: br#"{"role":"classic","peers":[]}"#.to_vec(),
+            payload,
         };
         tx.send(Ok(update))
             .await

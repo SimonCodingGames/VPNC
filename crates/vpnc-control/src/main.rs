@@ -91,9 +91,10 @@ async fn main() -> anyhow::Result<()> {
             }
 
             let runtime = NodeRuntimeState::default();
-            let grpc_svc = NodeGrpcService::new(db.clone(), runtime.clone());
             let grpc_addr = bind_addr(&config.grpc_bind);
             let state = build_state(config.clone(), db.clone())?;
+            let grpc_svc =
+                NodeGrpcService::new(db.clone(), runtime.clone(), state.crypto.clone());
             let binaries_dir = state
                 .config
                 .node_binaries_dir
