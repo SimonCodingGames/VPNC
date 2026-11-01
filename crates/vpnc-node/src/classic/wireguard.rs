@@ -12,7 +12,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
 use tempfile::NamedTempFile;
-use vpnc_common::ClassicWgConfig;
+use vpnc_common::{ClassicWgConfig, WG_MTU};
 
 /// Desired peer state for idempotent sync.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,7 +111,11 @@ pub fn apply_interface(desired: &DesiredInterface) -> Result<WgBackendKind> {
     for addr in &desired.addresses {
         replace_address(&desired.name, addr)?;
     }
-    run_ok("ip", &["link", "set", "dev", &desired.name, "up"])?;
+    let mtu = WG_MTU.to_string();
+    run_ok(
+        "ip",
+        &["link", "set", "dev", &desired.name, "mtu", &mtu, "up"],
+    )?;
     tracing::info!(
         iface = %desired.name,
         peers = desired.peers.len(),

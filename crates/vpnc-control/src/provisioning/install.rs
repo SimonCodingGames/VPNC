@@ -18,7 +18,36 @@ if command -v apt-get >/dev/null 2>&1; then
   apt-get install -y -qq wireguard-tools iproute2 nftables
 fi
 modprobe wireguard 2>/dev/null || true
-install -d -m 755 /usr/local/bin /etc/vpnc
+install -d -m 755 /usr/local/bin /etc/vpnc /etc/sysctl.d /etc/modules-load.d
+cat >/etc/modules-load.d/vpnc-wireguard.conf <<'EOF'
+wireguard
+EOF
+cat >/etc/sysctl.d/99-vpnc.conf <<'EOF'
+net.ipv4.ip_forward=1
+net.ipv6.conf.all.forwarding=1
+net.ipv4.conf.all.rp_filter=2
+net.ipv4.conf.default.rp_filter=2
+EOF
+sysctl --system >/dev/null 2>&1 || true
+# Open WireGuard UDP if a host firewall is active (cloud SG still needed).
+if command -v ufw >/dev/null 2>&1; then
+  ufw allow 51820/udp || true
+fi
+if command -v firewall-cmd >/dev/null 2>&1; then
+  firewall-cmd --permanent --add-port=51820/udp || true
+  firewall-cmd --reload || true
+fi
+if command -v nft >/dev/null 2>&1; then
+  nft delete table inet vpnc_input 2>/dev/null || true
+  nft -f - <<'EOF'
+table inet vpnc_input {
+  chain input {
+    type filter hook input priority filter; policy accept;
+    udp dport 51820 accept
+  }
+}
+EOF
+fi
 install -m 755 /tmp/vpnc-node-new /usr/local/bin/vpnc-node
 install -m 755 /tmp/vpnc-node-run.sh /usr/local/bin/vpnc-node-run
 install -m 600 /tmp/vpnc-node.toml /etc/vpnc/node.toml

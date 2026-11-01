@@ -10,6 +10,10 @@ use crate::provisioning::detect::format_wg_endpoint;
 use crate::services::wireguard::{
     conf_qr_png, render_client_conf, validate_conf, ClientConfParams, WgKeypair,
 };
+use vpnc_common::{
+    CLIENT_ALLOWED_IPS, CLIENT_DNS, DEFAULT_TUNNEL_CIDR_V4, DEFAULT_TUNNEL_CIDR_V6, WG_LISTEN_PORT,
+    WG_MTU,
+};
 use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::routing::{get, post};
@@ -144,12 +148,12 @@ async fn create_profile(
         .tunnel_cidr_v4
         .as_deref()
         .filter(|s| !s.is_empty())
-        .unwrap_or("10.66.0.0/24");
+        .unwrap_or(DEFAULT_TUNNEL_CIDR_V4);
     let cidr_v6 = node
         .tunnel_cidr_v6
         .as_deref()
         .filter(|s| !s.is_empty())
-        .unwrap_or("fd66::/64");
+        .unwrap_or(DEFAULT_TUNNEL_CIDR_V6);
     let _ = ipam
         .reserve_gateway_v4(cidr_v4)
         .map_err(|e| ApiError::bad_request(e.to_string()))?;
@@ -249,7 +253,8 @@ async fn download_profile(
     let server_public = node
         .server_public_key
         .ok_or_else(|| ApiError::internal("node missing server public key"))?;
-    let endpoint = format_wg_endpoint(node.public_ip.as_deref(), node.public_ipv6.as_deref(), 51820);
+    let endpoint =
+        format_wg_endpoint(node.public_ip.as_deref(), node.public_ipv6.as_deref(), WG_LISTEN_PORT);
 
     let conf = render_client_conf(&ClientConfParams {
         client_private_b64: &private,
@@ -257,8 +262,9 @@ async fn download_profile(
         address_v6: profile.assigned_ipv6.as_deref(),
         server_public_b64: &server_public,
         endpoint: &endpoint,
-        allowed_ips: "0.0.0.0/0, ::/0",
-        dns: Some("1.1.1.1"),
+        allowed_ips: CLIENT_ALLOWED_IPS,
+        dns: Some(CLIENT_DNS),
+        mtu: Some(WG_MTU),
     });
     validate_conf(&conf).map_err(ApiError::internal)?;
     let qr = conf_qr_png(&conf).map_err(ApiError::internal)?;

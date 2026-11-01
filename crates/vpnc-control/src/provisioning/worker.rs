@@ -126,12 +126,12 @@ async fn tick(
         .tunnel_cidr_v4
         .clone()
         .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "10.66.0.0/24".into());
+        .unwrap_or_else(|| vpnc_common::DEFAULT_TUNNEL_CIDR_V4.into());
     let cidr_v6 = job
         .tunnel_cidr_v6
         .clone()
         .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "fd66::/64".into());
+        .unwrap_or_else(|| vpnc_common::DEFAULT_TUNNEL_CIDR_V6.into());
     let db = svc.db().clone();
     let wait = wait_until(
         || {

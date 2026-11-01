@@ -231,6 +231,11 @@ vpnc-node run \
 3. Einmal-Download: `.conf` + QR (Hinweis in der UI)
 4. In die offizielle WireGuard-App importieren
 
+Die `.conf` enthält automatisch Endpoint (öffentliche IP), `MTU = 1420`, DNS und
+Full-Tunnel (`AllowedIPs = 0.0.0.0/0`). Am Node: Forwarding, NAT und UDP 51820
+werden bei SSH-Install bzw. vom Daemon gesetzt — in der **Cloud-Firewall**
+muss UDP **51820** zum Node trotzdem freigegeben sein.
+
 Private Keys werden **nicht** in der DB gespeichert; der Download funktioniert
 genau einmal.
 

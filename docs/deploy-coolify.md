@@ -96,22 +96,28 @@ Siehe auch [backup-restore.md](backup-restore.md).
 
 ### Primär: Dashboard-Assistent (kein Login auf dem Server)
 
-1. Firewall: Control erreichbar auf **TCP 50051** vom Node-Host; Control muss den Node auf **SSH (22)** erreichen
+1. **Netzwerk / Cloud-Firewall (wichtig):**
+   - Control ← Node: **TCP 50051**
+   - Control → Node: **SSH 22** (nur fürs Provisioning)
+   - Clients → Node: **UDP 51820** (WireGuard; Security Group / Hetzner Firewall / ufw)
 2. Dashboard **Server** → Tab **Per SSH installieren**
-3. Host/IP, User, Passwort (oder Key), Rolle `classic`, CIDR z. B. `10.66.0.0/24`
+3. Host/IP, User, Passwort (oder Key), Rolle `classic` (CIDRs haben Defaults)
 4. Host-Key-Fingerprint prüfen → **bestätigen** → Live-Log bis `succeeded`
-5. Node erscheint **online**
+5. Node erscheint **online** — Install setzt automatisch: WireGuard-Tools, sysctl-Forwarding,
+   nft/ufw UDP 51820, `wg0`+NAT sobald Profile existieren
 
 ### Fallback: Join-Token manuell
 
 Tab **Manuell / Join-Token** → Befehl auf dem Server ausführen.
 
-Danach: Gerät → Profil → einmalig `.conf`/QR → WireGuard-App.
+Danach: **Geräte** → Gerät anlegen → **Profile** → Profil → einmalig `.conf`/QR in die
+offizielle WireGuard-App. Profile enthalten bereits `MTU = 1420`, DNS und Full-Tunnel.
 
 ## Checkliste
 
 - [ ] Compose-Datei `docker-compose.coolify.yml`
 - [ ] Domain / `SERVICE_FQDN_CONTROL_8080`
+- [ ] Cloud-Firewall: **UDP 51820** zum Node
 - [ ] `SERVICE_PASSWORD_POSTGRES` + `VPNC_MASTER_KEY`
 - [ ] Bootstrap-Admin gesetzt oder CLI ausgeführt
 - [ ] Login unter derselben Domain wie `/api/health`

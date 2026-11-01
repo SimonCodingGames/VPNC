@@ -36,9 +36,10 @@
 
 ### Schritt 7
 - Control baut Classic-Config (Private Key entschlüsselt, Peers aus Profilen).
-- Node wendet `wg0` per `wg setconf` + Adressen/`ip link` an; nft-Tabelle `vpnc` + Forwarding.
-- Gateway `.1` / erster IPv6-Host für Server reserviert; Clients ab `.2`.
-- Offen: Live-E2E auf dem provisionierten Host (Firewall UDP 51820, neues Profil nach Redeploy).
+- Node: `wg setconf`, MTU 1420, nft NAT+MSS, sysctl persist, UDP-51820 allow, Host-Harden.
+- Gemeinsame Defaults in `vpnc-common::tunnel` (Port, CIDR, MTU, DNS, AllowedIPs).
+- SSH-Install: wireguard-tools, sysctl.d, ufw/firewalld/nft UDP 51820.
+- Gateway `.1` reserviert; Clients ab `.2`. Cloud-SG UDP 51820 bleibt Betreiber-Sache.
 
 ### Blocker / Entscheidungen nötig
 - **Schritt 15:** ADR 0005 – OpenVPN-Client-Lizenz.

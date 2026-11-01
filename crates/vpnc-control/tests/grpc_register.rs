@@ -5,12 +5,14 @@ use sha2::{Digest, Sha256};
 use std::time::Duration as StdDuration;
 use tonic::transport::Server;
 use uuid::Uuid;
+use vpnc_common::Secret;
 use vpnc_control::db::Db;
 use vpnc_control::grpc::node::mark_offline_nodes;
 use vpnc_control::grpc::pb::node::node_service_client::NodeServiceClient;
 use vpnc_control::grpc::pb::node::node_service_server::NodeServiceServer;
 use vpnc_control::grpc::pb::node::{RegisterRequest, StreamConfigRequest};
 use vpnc_control::grpc::{NodeGrpcService, NodeRuntimeState};
+use vpnc_control::services::crypto::CryptoService;
 
 #[tokio::test]
 async fn register_stream_and_offline() {
@@ -43,7 +45,8 @@ async fn register_stream_and_offline() {
     }
 
     let runtime = NodeRuntimeState::default();
-    let svc = NodeGrpcService::new(db.clone(), runtime.clone());
+    let crypto = CryptoService::new(Secret::new([9u8; 32]));
+    let svc = NodeGrpcService::new(db.clone(), runtime.clone(), crypto);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     drop(listener);
@@ -81,8 +84,12 @@ async fn register_stream_and_offline() {
         .unwrap()
         .into_inner();
     let update = stream.message().await.unwrap().unwrap();
-    assert_eq!(update.version, 1);
+    assert!(update.version != 0);
     assert!(update.full_snapshot);
+    let cfg: vpnc_common::ClassicWgConfig = serde_json::from_slice(&update.payload).unwrap();
+    assert_eq!(cfg.role, "classic");
+    assert_eq!(cfg.listen_port, vpnc_common::WG_LISTEN_PORT);
+    assert!(!cfg.private_key.is_empty());
 
     tokio::time::sleep(StdDuration::from_millis(20)).await;
     mark_offline_nodes(&db, &runtime, 0).await;

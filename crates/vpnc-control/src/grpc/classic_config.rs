@@ -8,12 +8,10 @@ use anyhow::{bail, Context, Result};
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
 use chrono::Utc;
-use vpnc_common::{ClassicPeerConfig, ClassicWgConfig};
-
-const DEFAULT_CIDR_V4: &str = "10.66.0.0/24";
-const DEFAULT_CIDR_V6: &str = "fd66::/64";
-const LISTEN_PORT: u16 = 51820;
-const IFACE: &str = "wg0";
+use vpnc_common::{
+    ClassicPeerConfig, ClassicWgConfig, DEFAULT_TUNNEL_CIDR_V4, DEFAULT_TUNNEL_CIDR_V6,
+    WG_INTERFACE, WG_LISTEN_PORT,
+};
 
 /// Builds a full classic config for `node_id`, ensuring a server keypair exists.
 pub async fn build_classic_config(
@@ -32,13 +30,13 @@ pub async fn build_classic_config(
         .tunnel_cidr_v4
         .as_deref()
         .filter(|s| !s.is_empty())
-        .unwrap_or(DEFAULT_CIDR_V4)
+        .unwrap_or(DEFAULT_TUNNEL_CIDR_V4)
         .to_string();
     let cidr_v6 = row
         .tunnel_cidr_v6
         .as_deref()
         .filter(|s| !s.is_empty())
-        .unwrap_or(DEFAULT_CIDR_V6)
+        .unwrap_or(DEFAULT_TUNNEL_CIDR_V6)
         .to_string();
 
     let private_b64 = ensure_private_key(db, crypto, node_id, &row).await?;
@@ -52,8 +50,8 @@ pub async fn build_classic_config(
 
     Ok(ClassicWgConfig {
         role: "classic".into(),
-        interface: IFACE.into(),
-        listen_port: LISTEN_PORT,
+        interface: WG_INTERFACE.into(),
+        listen_port: WG_LISTEN_PORT,
         private_key: private_b64,
         address_v4,
         address_v6,

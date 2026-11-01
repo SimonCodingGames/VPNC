@@ -55,6 +55,8 @@ pub struct ClientConfParams<'a> {
     pub allowed_ips: &'a str,
     /// DNS servers, comma-separated (optional).
     pub dns: Option<&'a str>,
+    /// Interface MTU (optional). Recommended ≤1420 for WireGuard full tunnel.
+    pub mtu: Option<u16>,
 }
 
 /// Renders a `wg-quick`-compatible `.conf` file.
@@ -77,6 +79,9 @@ pub fn render_client_conf(p: &ClientConfParams<'_>) -> String {
     }
     if let Some(dns) = p.dns {
         out.push_str(&format!("DNS = {dns}\n"));
+    }
+    if let Some(mtu) = p.mtu {
+        out.push_str(&format!("MTU = {mtu}\n"));
     }
     out.push('\n');
     out.push_str("[Peer]\n");
@@ -163,10 +168,12 @@ mod tests {
             address_v6: None,
             server_public_b64: &server.public_b64(),
             endpoint: "vpn.example.com:51820",
-            allowed_ips: "0.0.0.0/0, ::/0",
+            allowed_ips: "0.0.0.0/0",
             dns: Some("1.1.1.1"),
+            mtu: Some(vpnc_common::WG_MTU),
         });
         validate_conf(&conf).unwrap();
+        assert!(conf.contains(&format!("MTU = {}", vpnc_common::WG_MTU)));
         assert!(!conf.contains(&format!("{:?}", kp.private)));
     }
 
