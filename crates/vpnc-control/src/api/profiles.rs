@@ -229,7 +229,10 @@ async fn download_profile(
         .remove(&id)
         .ok_or_else(|| ApiError::bad_request("private key already downloaded or unavailable"))?;
 
-    let node = fetch_classic_node(&state.db, profile.node_id)
+    let node_id = profile
+        .node_id
+        .ok_or_else(|| ApiError::bad_request("profile has no server (node was deleted)"))?;
+    let node = fetch_classic_node(&state.db, node_id)
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found("node not found"))?;
@@ -327,7 +330,8 @@ struct NodeRow {
 
 struct ProfileRow {
     device_id: Uuid,
-    node_id: Uuid,
+    /// None when the node was deleted (`ON DELETE SET NULL`).
+    node_id: Option<Uuid>,
     assigned_ipv4: Option<String>,
     assigned_ipv6: Option<String>,
     revoked: bool,
@@ -607,7 +611,13 @@ async fn fetch_profiles(
 }
 
 async fn fetch_profile(db: &Db, id: Uuid) -> anyhow::Result<Option<ProfileRow>> {
-    let row: Option<(String, String, Option<String>, Option<String>, Option<String>)> = match db {
+    let row: Option<(
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> = match db {
         Db::Sqlite(pool) => {
             sqlx::query_as(
                 "SELECT device_id, node_id, assigned_ipv4, assigned_ipv6, revoked_at FROM profiles WHERE id = ?",
@@ -628,7 +638,10 @@ async fn fetch_profile(db: &Db, id: Uuid) -> anyhow::Result<Option<ProfileRow>> 
     Ok(match row {
         Some((device_id, node_id, v4, v6, revoked_at)) => Some(ProfileRow {
             device_id: Uuid::parse_str(&device_id)?,
-            node_id: Uuid::parse_str(&node_id)?,
+            node_id: node_id
+                .as_deref()
+                .map(Uuid::parse_str)
+                .transpose()?,
             assigned_ipv4: v4,
             assigned_ipv6: v6,
             revoked: revoked_at.is_some(),
