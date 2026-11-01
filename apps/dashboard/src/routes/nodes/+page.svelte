@@ -1,13 +1,35 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import { fetchMe } from '$lib/auth';
   import { api, ApiError, type JoinToken, type Node, type ProvisioningJob } from '$lib/api';
-  import Forbidden from '$lib/components/Forbidden.svelte';
   import { de } from '$lib/i18n/de';
+  import { formatRelative, roleTone } from '$lib/format';
+  import { confirmAction, toast } from '$lib/ui.svelte';
+  import Forbidden from '$lib/components/Forbidden.svelte';
+  import Icon, { type IconName } from '$lib/components/Icon.svelte';
+  import PageHeader from '$lib/components/PageHeader.svelte';
+  import EmptyState from '$lib/components/EmptyState.svelte';
+  import Alert from '$lib/components/Alert.svelte';
+  import Badge from '$lib/components/Badge.svelte';
+  import StatusBadge from '$lib/components/StatusBadge.svelte';
+  import Modal from '$lib/components/Modal.svelte';
+  import CopyField from '$lib/components/CopyField.svelte';
+  import Spinner from '$lib/components/Spinner.svelte';
+  import LoadingState from '$lib/components/LoadingState.svelte';
+  import PasswordInput from '$lib/components/PasswordInput.svelte';
+
+  type Role = 'classic' | 'ingress' | 'egress';
+  const roles: { value: Role; icon: IconName }[] = [
+    { value: 'classic', icon: 'server' },
+    { value: 'ingress', icon: 'globe' },
+    { value: 'egress', icon: 'network' }
+  ];
 
   let allowed = $state<boolean | null>(null);
+  let addOpen = $state(false);
   let tab = $state<'wizard' | 'manual'>('wizard');
   let items = $state<Node[]>([]);
+  let loaded = $state(false);
   let error = $state('');
   let busy = $state(false);
 
@@ -17,20 +39,33 @@
   let sshUser = $state('root');
   let sshPassword = $state('');
   let sshKey = $state('');
-  let role = $state('classic');
+  let role = $state<Role>('classic');
   let nodeName = $state('');
   let cidrV4 = $state('10.66.0.0/24');
   let cidrV6 = $state('');
   let job = $state<ProvisioningJob | null>(null);
   let logText = $state('');
+  let logEl = $state<HTMLPreElement | null>(null);
   let pollTimer: ReturnType<typeof setInterval> | null = null;
 
   // Manual
-  let tokenRole = $state('classic');
+  let tokenRole = $state<Role>('classic');
   let tokenName = $state('');
   let ttl = $state(60);
   let token = $state<JoinToken | null>(null);
-  let copied = $state('');
+
+  const jobDone = $derived(
+    job !== null && ['succeeded', 'failed', 'cancelled'].includes(job.status)
+  );
+  const jobStep = $derived(
+    !job
+      ? 0
+      : job.status === 'awaiting_hostkey' || job.status === 'pending'
+        ? 1
+        : job.status === 'running'
+          ? 2
+          : 3
+  );
 
   onMount(async () => {
     const me = await fetchMe();
@@ -52,13 +87,26 @@
         allowed = false;
         return;
       }
-      error = e instanceof ApiError ? e.message : 'Fehler';
+      error = e instanceof ApiError ? e.message : de.genericError;
+    } finally {
+      loaded = true;
     }
   }
 
   function clearSecrets() {
     sshPassword = '';
     sshKey = '';
+  }
+
+  function closeAdd() {
+    addOpen = false;
+    clearSecrets();
+    // One-time token must not linger in memory.
+    token = null;
+    if (jobDone) {
+      job = null;
+      logText = '';
+    }
   }
 
   async function onWizardStart(e: Event) {
@@ -85,7 +133,7 @@
       job = await api.createProvisioningJob(body);
       clearSecrets();
     } catch (err) {
-      error = err instanceof ApiError ? err.message : 'Fehler';
+      error = err instanceof ApiError ? err.message : de.genericError;
       clearSecrets();
     } finally {
       busy = false;
@@ -100,7 +148,19 @@
       job = await api.confirmHostKey(job.id, job.host_key_fingerprint);
       startPolling(job.id);
     } catch (err) {
-      error = err instanceof ApiError ? err.message : 'Fehler';
+      error = err instanceof ApiError ? err.message : de.genericError;
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function onCancelJob() {
+    if (!job) return;
+    busy = true;
+    try {
+      job = await api.cancelProvisioningJob(job.id);
+    } catch (err) {
+      error = err instanceof ApiError ? err.message : de.genericError;
     } finally {
       busy = false;
     }
@@ -113,9 +173,12 @@
         const j = await api.getProvisioningJob(id);
         job = j;
         logText = j.log_text;
+        await tick();
+        if (logEl) logEl.scrollTop = logEl.scrollHeight;
         if (j.status === 'succeeded' || j.status === 'failed' || j.status === 'cancelled') {
           if (pollTimer) clearInterval(pollTimer);
           pollTimer = null;
+          if (j.status === 'succeeded') toast(`${j.node_name ?? j.host} installiert`);
           await load();
         }
       } catch {
@@ -124,14 +187,27 @@
     }, 1500);
   }
 
-  async function onDelete(id: string) {
-    if (!confirm(de.nodes.confirmDelete)) return;
+  function resetWizard() {
+    job = null;
+    logText = '';
+    error = '';
+  }
+
+  async function onDelete(n: Node) {
+    const ok = await confirmAction({
+      title: de.nodes.confirmDelete,
+      message: `${n.name} – ${de.nodes.confirmDeleteText}`,
+      confirmLabel: de.delete,
+      danger: true
+    });
+    if (!ok) return;
     busy = true;
     try {
-      await api.deleteNode(id);
+      await api.deleteNode(n.id);
+      toast(`${n.name} gelöscht`);
       await load();
     } catch (err) {
-      error = err instanceof ApiError ? err.message : 'Fehler';
+      error = err instanceof ApiError ? err.message : de.genericError;
     } finally {
       busy = false;
     }
@@ -148,18 +224,10 @@
         ttl_minutes: ttl
       });
     } catch (err) {
-      error = err instanceof ApiError ? err.message : 'Fehler';
+      error = err instanceof ApiError ? err.message : de.genericError;
     } finally {
       busy = false;
     }
-  }
-
-  async function copy(text: string, key: string) {
-    await navigator.clipboard.writeText(text);
-    copied = key;
-    setTimeout(() => {
-      if (copied === key) copied = '';
-    }, 2000);
   }
 </script>
 
@@ -167,238 +235,400 @@
   <title>{de.nodes.title} · {de.brand}</title>
 </svelte:head>
 
+{#snippet rolePicker(current: Role, set: (r: Role) => void, name: string)}
+  <div class="grid gap-2 sm:grid-cols-3" role="radiogroup" aria-label={de.role}>
+    {#each roles as r (r.value)}
+      {@const active = current === r.value}
+      <label
+        class="relative flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition {active
+          ? 'border-brand-500 bg-brand-50/60 ring-4 ring-brand-500/10 dark:border-brand-400 dark:bg-brand-500/5'
+          : 'border-ink-200 hover:border-ink-300 dark:border-ink-700 dark:hover:border-ink-600'}"
+      >
+        <input
+          type="radio"
+          class="sr-only"
+          {name}
+          value={r.value}
+          checked={active}
+          onchange={() => set(r.value)}
+        />
+        <Icon
+          name={r.icon}
+          size={18}
+          class={active ? 'mt-0.5 text-brand-600 dark:text-brand-400' : 'mt-0.5 text-ink-400'}
+        />
+        <span class="min-w-0">
+          <span class="block text-sm font-semibold capitalize">{r.value}</span>
+          <span class="block text-xs text-ink-500 dark:text-ink-400"
+            >{de.nodes.roleHint[r.value]}</span
+          >
+        </span>
+      </label>
+    {/each}
+  </div>
+{/snippet}
+
 {#if allowed === null}
-  <p class="text-sm text-slate-500">{de.loading}</p>
+  <LoadingState />
 {:else if !allowed}
   <Forbidden />
 {:else}
-  <section class="space-y-8">
-    <h1 class="text-2xl font-semibold">{de.nodes.title}</h1>
+  <PageHeader title={de.nodes.title} subtitle={de.nodes.subtitle}>
+    {#snippet actions()}
+      <button type="button" class="btn-secondary" onclick={() => load()} aria-label={de.refresh}>
+        <Icon name="refresh" size={16} />
+      </button>
+      <button type="button" class="btn-primary" onclick={() => (addOpen = true)}>
+        <Icon name="plus" size={16} />
+        {de.nodes.add}
+      </button>
+    {/snippet}
+  </PageHeader>
 
-    <div class="flex gap-4 text-sm border-b border-slate-200 dark:border-slate-700 pb-2">
+  <div class="space-y-6">
+    {#if job && !addOpen}
       <button
         type="button"
-        class={tab === 'wizard' ? 'font-semibold underline' : 'hover:underline'}
-        onclick={() => (tab = 'wizard')}>{de.nodes.tabWizard}</button
+        class="card flex w-full items-center gap-3 px-4 py-3 text-left text-sm transition hover:border-brand-300"
+        onclick={() => (addOpen = true)}
       >
-      <button
-        type="button"
-        class={tab === 'manual' ? 'font-semibold underline' : 'hover:underline'}
-        onclick={() => (tab = 'manual')}>{de.nodes.tabManual}</button
-      >
-    </div>
+        {#if jobDone}<Icon name="check" size={16} class="text-brand-500" />{:else}<Spinner
+            size={16}
+            class="text-brand-500"
+          />{/if}
+        <span class="flex-1">
+          <strong>{de.nodes.jobTitle}</strong> · {job.host}:{job.ssh_port}
+        </span>
+        <StatusBadge status={job.status} />
+        <Icon name="chevronRight" size={16} class="text-ink-400" />
+      </button>
+    {/if}
 
-    {#if tab === 'wizard'}
-      <p class="text-sm text-slate-600 dark:text-slate-300">{de.nodes.wizardHint}</p>
+    {#if error && !addOpen}
+      <Alert tone="danger">{error}</Alert>
+    {/if}
 
-      <form class="flex flex-wrap gap-3 items-end" onsubmit={onWizardStart}>
-        <label class="space-y-1">
-          <span class="text-sm">{de.nodes.host}</span>
-          <input
-            class="block border border-slate-300 dark:border-slate-600 rounded px-3 py-2 bg-white dark:bg-slate-800"
-            bind:value={host}
-            required
-            placeholder="203.0.113.10"
-          />
-        </label>
-        <label class="space-y-1">
-          <span class="text-sm">{de.nodes.sshPort}</span>
-          <input
-            class="block border border-slate-300 dark:border-slate-600 rounded px-3 py-2 bg-white dark:bg-slate-800 w-24"
-            type="number"
-            min="1"
-            max="65535"
-            bind:value={sshPort}
-          />
-        </label>
-        <label class="space-y-1">
-          <span class="text-sm">{de.nodes.sshUser}</span>
-          <input
-            class="block border border-slate-300 dark:border-slate-600 rounded px-3 py-2 bg-white dark:bg-slate-800"
-            bind:value={sshUser}
-            required
-          />
-        </label>
-        <label class="space-y-1">
-          <span class="text-sm">{de.nodes.sshPassword}</span>
-          <input
-            class="block border border-slate-300 dark:border-slate-600 rounded px-3 py-2 bg-white dark:bg-slate-800"
-            type="password"
-            autocomplete="new-password"
-            bind:value={sshPassword}
-          />
-        </label>
-        <label class="space-y-1 w-full max-w-xl">
-          <span class="text-sm">{de.nodes.sshKey}</span>
-          <textarea
-            class="block w-full border border-slate-300 dark:border-slate-600 rounded px-3 py-2 bg-white dark:bg-slate-800 font-mono text-xs"
-            rows="3"
-            bind:value={sshKey}
-          ></textarea>
-        </label>
-        <label class="space-y-1">
-          <span class="text-sm">{de.role}</span>
-          <select
-            class="block border border-slate-300 dark:border-slate-600 rounded px-3 py-2 bg-white dark:bg-slate-800"
-            bind:value={role}
-          >
-            <option value="classic">classic</option>
-            <option value="ingress">ingress</option>
-            <option value="egress">egress</option>
-          </select>
-        </label>
-        <label class="space-y-1">
-          <span class="text-sm">{de.name}</span>
-          <input
-            class="block border border-slate-300 dark:border-slate-600 rounded px-3 py-2 bg-white dark:bg-slate-800"
-            bind:value={nodeName}
-            placeholder="edge-1"
-          />
-        </label>
-        <label class="space-y-1">
-          <span class="text-sm">{de.nodes.cidrV4}</span>
-          <input
-            class="block border border-slate-300 dark:border-slate-600 rounded px-3 py-2 bg-white dark:bg-slate-800"
-            bind:value={cidrV4}
-          />
-        </label>
-        <button
-          class="bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 rounded px-4 py-2"
-          type="submit"
-          disabled={busy}>{de.nodes.startInstall}</button
-        >
-      </form>
-
-      {#if job}
-        <div class="border border-slate-200 dark:border-slate-700 rounded p-4 space-y-3">
-          <div class="text-sm">
-            Status: <strong>{job.status}</strong> · {job.host}:{job.ssh_port}
-          </div>
-          {#if job.status === 'awaiting_hostkey' && job.host_key_fingerprint}
-            <h2 class="font-medium">{de.nodes.hostKeyTitle}</h2>
-            <p class="text-sm text-slate-600 dark:text-slate-300">{de.nodes.hostKeyHint}</p>
-            <code class="block break-all bg-slate-100 dark:bg-slate-800 p-2 rounded text-sm"
-              >{job.host_key_fingerprint}</code
-            >
-            <button
-              type="button"
-              class="bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 rounded px-4 py-2"
-              onclick={onConfirmHostKey}
-              disabled={busy}>{de.nodes.confirmHostKey}</button
-            >
-          {/if}
-          {#if logText || job.log_text}
-            <h2 class="font-medium">{de.nodes.liveLog}</h2>
-            <pre
-              class="text-xs overflow-auto bg-slate-100 dark:bg-slate-800 p-3 rounded max-h-64 whitespace-pre-wrap">{logText ||
-                job.log_text}</pre>
-          {/if}
-          {#if job.error_message}
-            <p class="text-sm text-red-600">{job.error_message}</p>
-          {/if}
+    <div class="card overflow-hidden">
+      {#if !loaded}
+        <LoadingState />
+      {:else if items.length === 0}
+        <EmptyState icon="server" title={de.nodes.emptyTitle} text={de.nodes.emptyText}>
+          <button type="button" class="btn-primary" onclick={() => (addOpen = true)}>
+            <Icon name="plus" size={16} />
+            {de.nodes.add}
+          </button>
+        </EmptyState>
+      {:else}
+        <div class="overflow-x-auto">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>{de.name}</th>
+                <th>{de.role}</th>
+                <th class="hidden md:table-cell">{de.nodes.publicIp}</th>
+                <th>{de.status}</th>
+                <th class="hidden lg:table-cell">{de.nodes.lastSeen}</th>
+                <th class="text-right"><span class="sr-only">{de.actions}</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each items as n (n.id)}
+                <tr>
+                  <td>
+                    <div class="flex items-center gap-3">
+                      <span
+                        class="hidden h-9 w-9 shrink-0 place-items-center rounded-lg sm:grid bg-ink-100 text-ink-600 dark:bg-ink-800 dark:text-ink-300"
+                      >
+                        <Icon name="server" size={16} />
+                      </span>
+                      <div>
+                        <div
+                          class="whitespace-nowrap font-mono text-sm font-medium text-ink-900 dark:text-white"
+                        >
+                          {n.name}
+                        </div>
+                        <div class="font-mono text-xs text-ink-400">{n.id.slice(0, 8)}</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td><Badge tone={roleTone(n.role)}>{n.role}</Badge></td>
+                  <td class="hidden font-mono text-xs text-ink-600 dark:text-ink-300 md:table-cell"
+                    >{n.public_ip ?? '—'}</td
+                  >
+                  <td><StatusBadge status={n.status} /></td>
+                  <td class="hidden whitespace-nowrap text-ink-500 lg:table-cell">
+                    {n.last_seen_at ? formatRelative(n.last_seen_at) : de.nodes.never}
+                  </td>
+                  <td class="text-right">
+                    <button
+                      type="button"
+                      class="btn-icon hover:!bg-red-50 hover:!text-red-600 dark:hover:!bg-red-500/10 dark:hover:!text-red-400"
+                      title={de.delete}
+                      aria-label={`${de.delete}: ${n.name}`}
+                      onclick={() => onDelete(n)}
+                    >
+                      <Icon name="trash" size={16} />
+                    </button>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
         </div>
       {/if}
-    {:else}
-      <form
-        class="space-y-3 border border-slate-200 dark:border-slate-700 rounded p-4"
-        onsubmit={onToken}
-      >
-        <h2 class="font-medium">{de.nodes.joinToken}</h2>
-        <div class="flex flex-wrap gap-3 items-end">
-          <label class="space-y-1">
-            <span class="text-sm">{de.role}</span>
-            <select
-              class="block border border-slate-300 dark:border-slate-600 rounded px-3 py-2 bg-white dark:bg-slate-800"
-              bind:value={tokenRole}
-            >
-              <option value="classic">classic</option>
-              <option value="ingress">ingress</option>
-              <option value="egress">egress</option>
-            </select>
-          </label>
-          <label class="space-y-1">
-            <span class="text-sm">{de.name}</span>
-            <input
-              class="block border border-slate-300 dark:border-slate-600 rounded px-3 py-2 bg-white dark:bg-slate-800"
-              bind:value={tokenName}
-            />
-          </label>
-          <label class="space-y-1">
-            <span class="text-sm">{de.nodes.ttl}</span>
-            <input
-              class="block border border-slate-300 dark:border-slate-600 rounded px-3 py-2 bg-white dark:bg-slate-800 w-24"
-              type="number"
-              min="1"
-              max="1440"
-              bind:value={ttl}
-            />
-          </label>
-          <button
-            class="bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 rounded px-4 py-2"
-            type="submit"
-            disabled={busy}>{de.nodes.joinToken}</button
-          >
-        </div>
-        {#if token}
-          <p class="text-sm text-amber-700 dark:text-amber-300">{de.nodes.tokenOnce}</p>
-          <div class="space-y-2 text-sm">
-            <div class="flex gap-2 items-start">
-              <code class="flex-1 break-all bg-slate-100 dark:bg-slate-800 p-2 rounded"
-                >{token.token}</code
+    </div>
+  </div>
+
+  <Modal open={addOpen} title={de.nodes.add} onclose={closeAdd} size="lg">
+    <div class="space-y-5">
+      <div class="tabs" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          class="tab"
+          aria-selected={tab === 'wizard'}
+          onclick={() => (tab = 'wizard')}
+        >
+          <Icon name="terminal" size={15} />
+          {de.nodes.tabWizard}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          class="tab"
+          aria-selected={tab === 'manual'}
+          onclick={() => (tab = 'manual')}
+        >
+          <Icon name="key" size={15} />
+          {de.nodes.tabManual}
+        </button>
+      </div>
+
+      {#if error}
+        <Alert tone="danger">{error}</Alert>
+      {/if}
+
+      {#if tab === 'wizard'}
+        <!-- Stepper -->
+        <ol class="flex items-center gap-2 text-xs font-medium">
+          {#each ['Verbindung', 'Host-Key', 'Installation'] as s, i (s)}
+            <li class="flex items-center gap-2">
+              <span
+                class="grid h-6 w-6 place-items-center rounded-full text-[11px] {jobStep > i
+                  ? 'bg-brand-500 text-white dark:text-ink-950'
+                  : jobStep === i
+                    ? 'bg-ink-900 text-white dark:bg-white dark:text-ink-900'
+                    : 'bg-ink-100 text-ink-500 dark:bg-ink-800 dark:text-ink-400'}"
               >
-              <button
-                type="button"
-                class="underline shrink-0"
-                onclick={() => copy(token!.token, 't')}
-                >{copied === 't' ? de.copied : de.copy}</button
+                {#if jobStep > i}<Icon name="check" size={12} strokeWidth={3} />{:else}{i + 1}{/if}
+              </span>
+              <span class={jobStep >= i ? 'text-ink-900 dark:text-white' : 'text-ink-400'}>{s}</span
               >
-            </div>
-            <div>
-              <div class="text-xs text-slate-500 mb-1">{de.nodes.installCmd}</div>
-              <div class="flex gap-2 items-start">
-                <code class="flex-1 break-all bg-slate-100 dark:bg-slate-800 p-2 rounded"
-                  >{token.install_command}</code
-                >
-                <button
-                  type="button"
-                  class="underline shrink-0"
-                  onclick={() => copy(token!.install_command, 'i')}
-                  >{copied === 'i' ? de.copied : de.copy}</button
-                >
+              {#if i < 2}<span class="h-px w-6 bg-ink-200 dark:bg-ink-700 sm:w-10"></span>{/if}
+            </li>
+          {/each}
+        </ol>
+
+        {#if !job}
+          <p class="text-sm text-ink-500 dark:text-ink-400">{de.nodes.wizardHint}</p>
+          <form id="wizard" class="space-y-6" onsubmit={onWizardStart}>
+            <fieldset class="space-y-3">
+              <legend class="mb-2 text-sm font-semibold">{de.nodes.sectionConnection}</legend>
+              <div class="grid gap-3 sm:grid-cols-[1fr_7rem_10rem]">
+                <div class="field">
+                  <label class="label" for="w-host">{de.nodes.host}</label>
+                  <input
+                    id="w-host"
+                    class="input font-mono"
+                    bind:value={host}
+                    required
+                    placeholder="203.0.113.10"
+                  />
+                </div>
+                <div class="field">
+                  <label class="label" for="w-port">{de.nodes.sshPort}</label>
+                  <input
+                    id="w-port"
+                    class="input font-mono"
+                    type="number"
+                    min="1"
+                    max="65535"
+                    bind:value={sshPort}
+                  />
+                </div>
+                <div class="field">
+                  <label class="label" for="w-user">{de.nodes.sshUser}</label>
+                  <input id="w-user" class="input font-mono" bind:value={sshUser} required />
+                </div>
               </div>
+            </fieldset>
+
+            <fieldset class="space-y-3">
+              <legend class="mb-2 text-sm font-semibold">{de.nodes.sectionAuth}</legend>
+              <div class="field">
+                <label class="label" for="w-pw">{de.nodes.sshPassword}</label>
+                <PasswordInput id="w-pw" bind:value={sshPassword} autocomplete="new-password" />
+              </div>
+              <div class="field">
+                <label class="label" for="w-key">{de.nodes.sshKey}</label>
+                <textarea
+                  id="w-key"
+                  class="input font-mono text-xs"
+                  rows="3"
+                  placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                  bind:value={sshKey}
+                ></textarea>
+              </div>
+            </fieldset>
+
+            <fieldset class="space-y-3">
+              <legend class="mb-2 text-sm font-semibold">{de.nodes.sectionNode}</legend>
+              {@render rolePicker(role, (r) => (role = r), 'wizard-role')}
+              <div class="grid gap-3 sm:grid-cols-3">
+                <div class="field">
+                  <label class="label" for="w-name">{de.name}</label>
+                  <input
+                    id="w-name"
+                    class="input font-mono"
+                    bind:value={nodeName}
+                    placeholder="edge-1"
+                  />
+                </div>
+                <div class="field">
+                  <label class="label" for="w-v4">{de.nodes.cidrV4}</label>
+                  <input id="w-v4" class="input font-mono" bind:value={cidrV4} />
+                </div>
+                <div class="field">
+                  <label class="label" for="w-v6">{de.nodes.cidrV6}</label>
+                  <input
+                    id="w-v6"
+                    class="input font-mono"
+                    bind:value={cidrV6}
+                    placeholder="fd00:66::/64"
+                  />
+                </div>
+              </div>
+            </fieldset>
+          </form>
+        {:else}
+          <div class="space-y-4">
+            <div
+              class="flex flex-wrap items-center gap-3 rounded-lg border border-ink-200 px-4 py-3 text-sm dark:border-ink-700"
+            >
+              <Icon name="server" size={16} class="text-ink-400" />
+              <span class="font-mono">{job.ssh_user}@{job.host}:{job.ssh_port}</span>
+              <Badge tone={roleTone(job.role)}>{job.role}</Badge>
+              <span class="ml-auto"><StatusBadge status={job.status} /></span>
             </div>
+
+            {#if job.status === 'awaiting_hostkey' && job.host_key_fingerprint}
+              <div
+                class="space-y-3 rounded-xl border border-amber-200 bg-amber-50/60 p-4 dark:border-amber-500/20 dark:bg-amber-500/5"
+              >
+                <div class="flex items-center gap-2">
+                  <Icon name="fingerprint" size={18} class="text-amber-600 dark:text-amber-400" />
+                  <h3 class="text-sm font-semibold">{de.nodes.hostKeyTitle}</h3>
+                </div>
+                <p class="text-sm text-ink-600 dark:text-ink-300">{de.nodes.hostKeyHint}</p>
+                <CopyField value={job.host_key_fingerprint} />
+              </div>
+            {/if}
+
+            {#if logText || job.log_text}
+              <div class="space-y-1.5">
+                <div class="label flex items-center gap-2">
+                  <Icon name="terminal" size={13} />
+                  {de.nodes.liveLog}
+                </div>
+                <div
+                  class="overflow-hidden rounded-lg border border-ink-800 bg-ink-950 shadow-inner"
+                >
+                  <div class="flex gap-1.5 border-b border-white/5 px-3 py-2">
+                    <span class="h-2.5 w-2.5 rounded-full bg-red-400/70"></span>
+                    <span class="h-2.5 w-2.5 rounded-full bg-amber-400/70"></span>
+                    <span class="h-2.5 w-2.5 rounded-full bg-brand-400/70"></span>
+                  </div>
+                  <pre
+                    bind:this={logEl}
+                    class="max-h-72 overflow-auto whitespace-pre-wrap p-3 font-mono text-xs leading-relaxed text-ink-200">{logText ||
+                      job.log_text}</pre>
+                </div>
+              </div>
+            {/if}
+
+            {#if job.error_message}
+              <Alert tone="danger">{job.error_message}</Alert>
+            {/if}
+            {#if job.status === 'succeeded'}
+              <Alert tone="success">{job.node_name ?? job.host} ist einsatzbereit.</Alert>
+            {/if}
           </div>
         {/if}
-      </form>
-    {/if}
-
-    {#if error}
-      <p class="text-sm text-red-600">{error}</p>
-    {/if}
-
-    {#if items.length === 0}
-      <p class="text-sm text-slate-500">{de.empty}</p>
-    {:else}
-      <ul
-        class="divide-y divide-slate-200 dark:divide-slate-700 border border-slate-200 dark:border-slate-700 rounded"
-      >
-        {#each items as n (n.id)}
-          <li class="px-3 py-3 flex flex-wrap gap-2 items-center">
-            <div>
-              <div class="font-medium">{n.name}</div>
-              <div class="text-xs text-slate-500">
-                {n.role} · {n.status}{#if n.public_ip}
-                  · {n.public_ip}{/if}
-              </div>
+      {:else}
+        <p class="text-sm text-ink-500 dark:text-ink-400">{de.nodes.joinTokenHint}</p>
+        <form id="token" class="space-y-4" onsubmit={onToken}>
+          {@render rolePicker(tokenRole, (r) => (tokenRole = r), 'token-role')}
+          <div class="grid gap-3 sm:grid-cols-[1fr_10rem]">
+            <div class="field">
+              <label class="label" for="t-name">{de.name}</label>
+              <input
+                id="t-name"
+                class="input font-mono"
+                bind:value={tokenName}
+                placeholder="edge-1"
+              />
             </div>
-            <button
-              type="button"
-              class="ml-auto text-sm underline text-red-600"
-              onclick={() => onDelete(n.id)}>{de.delete}</button
-            >
-          </li>
-        {/each}
-      </ul>
-    {/if}
-  </section>
+            <div class="field">
+              <label class="label" for="t-ttl">{de.nodes.ttl}</label>
+              <input id="t-ttl" class="input" type="number" min="1" max="1440" bind:value={ttl} />
+            </div>
+          </div>
+        </form>
+        {#if token}
+          <div class="space-y-4 border-t border-ink-100 pt-5 dark:border-ink-800">
+            <Alert tone="warning">{de.nodes.tokenOnce}</Alert>
+            <CopyField label={de.nodes.token} value={token.token} />
+            <CopyField label={de.nodes.installCmd} value={token.install_command} />
+            {#if token.docker_command}
+              <CopyField label={de.nodes.dockerCmd} value={token.docker_command} />
+            {/if}
+          </div>
+        {/if}
+      {/if}
+    </div>
+
+    {#snippet footer()}
+      {#if tab === 'wizard'}
+        {#if !job}
+          <button type="button" class="btn-secondary" onclick={closeAdd}>{de.cancel}</button>
+          <button type="submit" form="wizard" class="btn-primary" disabled={busy}>
+            {#if busy}<Spinner size={16} />{:else}<Icon name="arrowRight" size={16} />{/if}
+            {de.nodes.startInstall}
+          </button>
+        {:else if job.status === 'awaiting_hostkey'}
+          <button type="button" class="btn-secondary" disabled={busy} onclick={onCancelJob}
+            >{de.cancel}</button
+          >
+          <button type="button" class="btn-primary" onclick={onConfirmHostKey} disabled={busy}>
+            <Icon name="shield" size={16} />
+            {de.nodes.confirmHostKey}
+          </button>
+        {:else if jobDone}
+          <button type="button" class="btn-secondary" onclick={resetWizard}>
+            <Icon name="plus" size={16} />
+            {de.nodes.add}
+          </button>
+          <button type="button" class="btn-primary" onclick={closeAdd}>{de.close}</button>
+        {:else}
+          <button type="button" class="btn-secondary" onclick={closeAdd}>{de.close}</button>
+        {/if}
+      {:else}
+        <button type="button" class="btn-secondary" onclick={closeAdd}>{de.close}</button>
+        <button type="submit" form="token" class="btn-primary" disabled={busy}>
+          <Icon name="key" size={16} />
+          {de.nodes.joinToken}
+        </button>
+      {/if}
+    {/snippet}
+  </Modal>
 {/if}
