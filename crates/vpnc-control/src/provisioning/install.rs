@@ -1,0 +1,233 @@
+//! Remote installation script and orchestration (fixed scripts only).
+
+use super::binaries::{read_node_binary, resolve_node_binary};
+use super::jobs::SshSecrets;
+use super::preflight::PreflightReport;
+use super::ssh::SshSession;
+use anyhow::{bail, Context, Result};
+use std::path::Path;
+use std::sync::Arc;
+use std::time::Duration;
+
+const INSTALL_SH: &str = r#"#!/bin/bash
+set -euo pipefail
+install -d -m 755 /usr/local/bin /etc/vpnc
+install -m 755 /tmp/vpnc-node-new /usr/local/bin/vpnc-node
+install -m 755 /tmp/vpnc-node-run.sh /usr/local/bin/vpnc-node-run
+install -m 600 /tmp/vpnc-node.toml /etc/vpnc/node.toml
+install -m 644 /tmp/vpnc-node.service /etc/systemd/system/vpnc-node.service
+systemctl daemon-reload
+systemctl enable --now vpnc-node.service
+"#;
+
+const ROLLBACK_SH: &str = r#"#!/bin/bash
+set -euo pipefail
+systemctl disable --now vpnc-node.service 2>/dev/null || true
+rm -f /usr/local/bin/vpnc-node /usr/local/bin/vpnc-node-run /etc/vpnc/node.toml /etc/systemd/system/vpnc-node.service
+systemctl daemon-reload 2>/dev/null || true
+rm -f /tmp/vpnc-node-new /tmp/vpnc-node.toml /tmp/vpnc-node.service /tmp/vpnc-node-run.sh /tmp/vpnc-install.sh /tmp/vpnc-rollback.sh
+"#;
+
+const SERVICE_UNIT: &str =
+    "[Unit]\nDescription=VPNC node\nAfter=network-online.target\nWants=network-online.target\n\n\
+[Service]\nType=simple\nExecStart=/usr/local/bin/vpnc-node-run\nRestart=on-failure\nRestartSec=5\n\
+AmbientCapabilities=CAP_NET_ADMIN\nCapabilityBoundingSet=CAP_NET_ADMIN\n\n\
+[Install]\nWantedBy=multi-user.target\n";
+
+/// Parameters for a remote install (no SSH secrets).
+pub struct InstallParams<'a> {
+    /// Path to binaries dir.
+    pub binaries_dir: &'a Path,
+    /// Control gRPC URL for the node.
+    pub control_grpc: &'a str,
+    /// One-time join token (plaintext, once).
+    pub join_token: &'a str,
+    /// Node role.
+    pub role: &'a str,
+    /// Optional node name.
+    pub node_name: &'a str,
+    /// Expected host-key fingerprint.
+    pub host_key_fp: &'a str,
+}
+
+/// Cloneable log sink.
+#[derive(Clone)]
+pub struct ArcLog(pub Arc<dyn Fn(&str) + Send + Sync>);
+
+impl ArcLog {
+    /// Emits a line.
+    pub fn line(&self, msg: &str) {
+        (self.0)(msg);
+    }
+}
+
+/// Runs preflight over an open session.
+pub async fn run_preflight(session: &mut SshSession) -> Result<PreflightReport> {
+    let mut report = PreflightReport::default();
+
+    let (code, out, _) = session
+        .exec("cat /etc/os-release 2>/dev/null || true")
+        .await?;
+    if code == 0 {
+        for line in out.lines() {
+            if let Some(id) = line.strip_prefix("ID=") {
+                let id = id.trim_matches('"');
+                report.distro = Some(id.to_string());
+                if id != "debian" && id != "ubuntu" {
+                    return Ok(super::preflight::unsupported_distro(id));
+                }
+            }
+        }
+    }
+    if report.distro.is_none() {
+        report
+            .issues
+            .push("could not detect distribution (need debian/ubuntu)".into());
+    }
+
+    let (_, arch_out, _) = session.exec("uname -m").await?;
+    report.arch = Some(arch_out.trim().to_string());
+
+    let (_, id_out, _) = session.exec("id -u").await?;
+    let uid = id_out.trim();
+    report.privilege_ok = uid == "0";
+    if !report.privilege_ok {
+        let (scode, _, _) = session.exec("sudo -n true 2>/dev/null").await.unwrap_or((
+            1,
+            String::new(),
+            String::new(),
+        ));
+        report.privilege_ok = scode == 0;
+        if !report.privilege_ok {
+            report
+                .issues
+                .push("root or passwordless sudo required".into());
+        }
+    }
+
+    // Soft check: module may load later; do not block install.
+    report.wireguard_ok = true;
+    report.ports_ok = true;
+    Ok(report)
+}
+
+/// Full install over SSH.
+pub async fn install_node(
+    host: &str,
+    port: u16,
+    user: &str,
+    secrets: &SshSecrets,
+    params: &InstallParams<'_>,
+    log: &ArcLog,
+) -> Result<()> {
+    log.line("connecting via SSH…");
+    let (mut session, _fp) =
+        SshSession::connect(host, port, user, secrets, Some(params.host_key_fp)).await?;
+
+    log.line("running preflight…");
+    let report = run_preflight(&mut session).await?;
+    if !report.ok() {
+        bail!("preflight failed: {}", report.issues.join("; "));
+    }
+    let arch = report.arch.as_deref().unwrap_or("x86_64");
+    log.line(&format!(
+        "preflight ok (distro={:?}, arch={arch})",
+        report.distro
+    ));
+
+    let (bin_path, sha) = resolve_node_binary(params.binaries_dir, arch)?;
+    log.line(&format!("uploading vpnc-node ({})", bin_path.display()));
+    let bytes = read_node_binary(&bin_path)?;
+    session.upload("/tmp/vpnc-node-new", &bytes).await?;
+
+    let (c, out, _) = session
+        .exec("sha256sum /tmp/vpnc-node-new | awk '{print $1}'")
+        .await?;
+    if c != 0 || out.trim() != sha {
+        let _ = rollback(&mut session).await;
+        bail!("remote checksum mismatch");
+    }
+    log.line("checksum ok");
+
+    let toml = format!(
+        "control = \"{}\"\njoin_token = \"{}\"\nrole = \"{}\"\nname = \"{}\"\n",
+        sanitize_url(params.control_grpc),
+        params.join_token,
+        sanitize_token(params.role),
+        sanitize_name(params.node_name)
+    );
+    session
+        .upload_str("/tmp/vpnc-node.toml", &toml)
+        .await
+        .context("upload node.toml")?;
+
+    const WRAPPER: &str = "#!/bin/bash\nset -euo pipefail\n\
+CONTROL=$(grep -E '^control' /etc/vpnc/node.toml | cut -d'\"' -f2)\n\
+TOKEN=$(grep -E '^join_token' /etc/vpnc/node.toml | cut -d'\"' -f2)\n\
+ROLE=$(grep -E '^role' /etc/vpnc/node.toml | cut -d'\"' -f2)\n\
+NAME=$(grep -E '^name' /etc/vpnc/node.toml | cut -d'\"' -f2)\n\
+exec /usr/local/bin/vpnc-node run --control \"$CONTROL\" --join-token \"$TOKEN\" --role \"$ROLE\" --name \"$NAME\"\n";
+    session.upload_str("/tmp/vpnc-node-run.sh", WRAPPER).await?;
+    session
+        .upload_str("/tmp/vpnc-node.service", SERVICE_UNIT)
+        .await?;
+    session
+        .upload_str("/tmp/vpnc-install.sh", INSTALL_SH)
+        .await?;
+    session
+        .upload_str("/tmp/vpnc-rollback.sh", ROLLBACK_SH)
+        .await?;
+
+    log.line("running install script…");
+    let (code, out, err) = session.exec("bash /tmp/vpnc-install.sh").await?;
+    if code != 0 {
+        let _ = rollback(&mut session).await;
+        bail!("install failed (exit {code}): {err} {out}");
+    }
+    log.line("systemd unit started");
+    Ok(())
+}
+
+async fn rollback(session: &mut SshSession) -> Result<()> {
+    let _ = session
+        .upload_str("/tmp/vpnc-rollback.sh", ROLLBACK_SH)
+        .await;
+    let _ = session.exec("bash /tmp/vpnc-rollback.sh").await;
+    Ok(())
+}
+
+fn sanitize_url(url: &str) -> String {
+    url.chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, ':' | '/' | '.' | '-' | '_' | '@'))
+        .collect()
+}
+
+fn sanitize_token(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+        .collect()
+}
+
+fn sanitize_name(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        .take(64)
+        .collect()
+}
+
+/// Polls until `check` returns true or timeout.
+pub async fn wait_until(
+    mut check: impl FnMut() -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send>>,
+    timeout: Duration,
+    log: &ArcLog,
+) -> Result<()> {
+    let start = std::time::Instant::now();
+    while start.elapsed() < timeout {
+        if check().await {
+            log.line("node registered and online");
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+    bail!("timeout waiting for node registration");
+}

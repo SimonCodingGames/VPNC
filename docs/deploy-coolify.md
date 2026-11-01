@@ -36,7 +36,7 @@ Dashboard und API laufen unter **derselben Domain** (Static + `/api/*`).
 | `VPNC_BOOTSTRAP_PASSWORD` | empfohlen beim Erststart | min. 10 Zeichen; nach erstem Login entfernen/rotieren |
 | `VPNC_COOKIE_SECURE` | nein (Default `true`) | hinter HTTPS belassen |
 | `VPNC_TRUST_FORWARDED_HEADERS` | nein (Default `true`) | Traefik setzt `X-Forwarded-*` |
-| `VPNC_PUBLIC_GRPC` | empfohlen | z. B. `http://vpnc.example.com:50051` oder die öffentliche IP:Port – erscheint in Join-Token-Befehlen |
+| `VPNC_PUBLIC_GRPC` | **ja** (Compose) | z. B. `http://DEINE-IP:50051` – Nodes und SSH-Install nutzen diese Adresse |
 | `VPNC_SESSION_HOURS` | nein | Default `24` |
 
 `SERVICE_FQDN_CONTROL_8080` wird als `VPNC_PUBLIC_URL` durchgereicht (Install-/Doku-Links).
@@ -92,16 +92,19 @@ Siehe auch [backup-restore.md](backup-restore.md).
 
 ## 8. Node verbinden
 
-1. Im Dashboard **Server** → Node anlegen (Rolle `classic`, CIDR z. B. `10.66.0.0/24`)
-2. **Join-Token erzeugen** → Token, CLI- und Docker-Befehl einmalig kopieren
-3. Firewall: Control erreichbar auf **TCP 50051** vom Node-Host
-4. Auf dem Node ausführen (Beispiel aus dem Dashboard), z. B.:
+### Primär: Dashboard-Assistent (kein Login auf dem Server)
 
-```bash
-vpnc-node run --control http://CONTROL:50051 --join-token TOKEN --role classic --name edge-1
-```
+1. Firewall: Control erreichbar auf **TCP 50051** vom Node-Host; Control muss den Node auf **SSH (22)** erreichen
+2. Dashboard **Server** → Tab **Per SSH installieren**
+3. Host/IP, User, Passwort (oder Key), Rolle `classic`, CIDR z. B. `10.66.0.0/24`
+4. Host-Key-Fingerprint prüfen → **bestätigen** → Live-Log bis `succeeded`
+5. Node erscheint **online**
 
-5. Gerät anlegen → Profil erzeugen → **einmalig** `.conf`/QR laden → in die WireGuard-App importieren
+### Fallback: Join-Token manuell
+
+Tab **Manuell / Join-Token** → Befehl auf dem Server ausführen.
+
+Danach: Gerät → Profil → einmalig `.conf`/QR → WireGuard-App.
 
 ## Checkliste
 

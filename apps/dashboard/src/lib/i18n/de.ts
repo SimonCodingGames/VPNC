@@ -55,6 +55,20 @@ export const de = {
   nodes: {
     title: 'Server',
     new: 'Server anlegen',
+    tabWizard: 'Per SSH installieren',
+    tabManual: 'Manuell / Join-Token',
+    wizardHint:
+      'Nur IP und SSH-Zugangsdaten eingeben. VPNC installiert den Node automatisch — ohne Login auf dem Server.',
+    host: 'Host / IP',
+    sshPort: 'SSH-Port',
+    sshUser: 'SSH-Benutzer',
+    sshPassword: 'Passwort',
+    sshKey: 'SSH-Private-Key (optional statt Passwort)',
+    startInstall: 'Verbinden und Host-Key prüfen',
+    confirmHostKey: 'Host-Key bestätigen und installieren',
+    hostKeyTitle: 'SSH Host-Key bestätigen',
+    hostKeyHint: 'Vergleiche den Fingerprint mit dem Server. Danach startet die Installation.',
+    liveLog: 'Installations-Log',
     joinToken: 'Join-Token erzeugen',
     tokenOnce:
       'Dieser Token wird nur einmal angezeigt. Sofort kopieren und auf dem Node verwenden.',

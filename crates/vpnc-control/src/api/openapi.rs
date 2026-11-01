@@ -92,6 +92,16 @@ async fn openapi_json() -> Json<Value> {
             },
             "/api/settings": {
                 "get": { "summary": "Read-only settings (admin)", "responses": { "200": { "description": "OK" } } }
+            },
+            "/api/provisioning": {
+                "get": { "summary": "List provisioning jobs (admin)", "responses": { "200": { "description": "OK" } } },
+                "post": { "summary": "Start SSH provisioning (admin)", "responses": { "201": { "description": "Created" } } }
+            },
+            "/api/provisioning/{id}/confirm-hostkey": {
+                "post": { "summary": "Confirm SSH host key", "responses": { "200": { "description": "OK" } } }
+            },
+            "/api/provisioning/{id}/events": {
+                "get": { "summary": "SSE live log", "responses": { "200": { "description": "SSE" } } }
             }
         }
     }))

@@ -39,6 +39,9 @@ pub struct ControlConfig {
     /// Auto-bootstrap admin password.
     #[serde(default, skip_serializing)]
     pub bootstrap_password: Option<String>,
+    /// Directory with `linux-amd64/vpnc-node` (and optionally arm64) binaries.
+    #[serde(default)]
+    pub node_binaries_dir: Option<PathBuf>,
     /// Telemetry / logging.
     pub telemetry: TelemetryConfig,
 }
@@ -58,6 +61,7 @@ impl Default for ControlConfig {
             public_grpc: None,
             bootstrap_email: None,
             bootstrap_password: None,
+            node_binaries_dir: None,
             telemetry: TelemetryConfig {
                 filter: "info".into(),
                 json: true,
@@ -103,6 +107,11 @@ impl ControlConfig {
         if let Ok(v) = std::env::var("VPNC_COOKIE_SECURE") {
             cfg.cookie_secure =
                 matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on");
+        }
+        if let Ok(v) = std::env::var("VPNC_NODE_BINARIES_DIR") {
+            if !v.is_empty() {
+                cfg.node_binaries_dir = Some(PathBuf::from(v));
+            }
         }
         Ok(cfg)
     }

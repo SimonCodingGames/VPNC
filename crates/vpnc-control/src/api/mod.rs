@@ -9,6 +9,7 @@ pub mod middleware;
 pub mod nodes;
 pub mod openapi;
 pub mod profiles;
+pub mod provisioning;
 pub mod settings;
 pub mod users;
 
@@ -25,6 +26,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .merge(profiles::router())
         .merge(audit::router())
         .merge(settings::router())
+        .merge(provisioning::router())
         .layer(from_fn_with_state(state.clone(), middleware::require_auth));
 
     Router::new()

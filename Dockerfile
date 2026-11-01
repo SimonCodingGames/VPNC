@@ -26,7 +26,10 @@ FROM chef AS rust-builder
 COPY --from=planner /src/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 COPY . .
-RUN cargo build --release -p vpnc-control
+RUN cargo build --release -p vpnc-control -p vpnc-node \
+    && mkdir -p /out/binaries/linux-amd64 \
+    && cp target/release/vpnc-control /out/vpnc-control \
+    && cp target/release/vpnc-node /out/binaries/linux-amd64/vpnc-node
 
 # --- Runtime ---
 FROM debian:bookworm-slim AS runtime
@@ -34,15 +37,17 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 --home /app --shell /usr/sbin/nologin vpnc \
-    && mkdir -p /app/static \
+    && mkdir -p /app/static /app/binaries \
     && chown -R vpnc:vpnc /app
 
-COPY --from=rust-builder /src/target/release/vpnc-control /usr/local/bin/vpnc-control
+COPY --from=rust-builder /out/vpnc-control /usr/local/bin/vpnc-control
+COPY --from=rust-builder /out/binaries /app/binaries
 COPY --from=dashboard /src/apps/dashboard/build /app/static
 
 USER vpnc
 WORKDIR /app
 ENV VPNC_STATIC_DIR=/app/static \
+    VPNC_NODE_BINARIES_DIR=/app/binaries \
     VPNC_HTTP_BIND=0.0.0.0:8080 \
     VPNC_GRPC_BIND=0.0.0.0:50051 \
     VPNC_TELEMETRY__JSON=true \

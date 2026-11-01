@@ -3,6 +3,7 @@
 use crate::api;
 use crate::config::ControlConfig;
 use crate::db::Db;
+use crate::provisioning::{ProvisioningService, SecretStore};
 use crate::services::auth::AuthService;
 use crate::services::crypto::CryptoService;
 use axum::body::Body;
@@ -34,6 +35,10 @@ pub struct AppState {
     pub config: Arc<ControlConfig>,
     /// Login rate limiter state.
     pub login_limiter: Arc<LoginRateLimiter>,
+    /// Provisioning job service.
+    pub provisioning: ProvisioningService,
+    /// RAM-only SSH secrets for provisioning jobs.
+    pub secret_store: SecretStore,
 }
 
 /// Simple in-process login rate limiter (per client key).
@@ -159,12 +164,15 @@ pub fn build_state(config: ControlConfig, db: Db) -> anyhow::Result<AppState> {
     let master_key = config.require_master_key()?;
     let crypto = CryptoService::new(master_key);
     let auth = AuthService::new(db.clone(), config.session_hours, config.cookie_secure);
+    let provisioning = ProvisioningService::new(db.clone());
     Ok(AppState {
         db,
         auth,
         crypto,
         config: Arc::new(config),
         login_limiter: Arc::new(LoginRateLimiter::default()),
+        provisioning,
+        secret_store: SecretStore::default(),
     })
 }
 

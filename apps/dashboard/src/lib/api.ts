@@ -116,6 +116,21 @@ export type Settings = {
   note: string;
 };
 
+export type ProvisioningJob = {
+  id: string;
+  status: 'pending' | 'awaiting_hostkey' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+  host: string;
+  ssh_port: number;
+  ssh_user: string;
+  role: string;
+  node_name: string | null;
+  tunnel_cidr_v4: string | null;
+  tunnel_cidr_v6: string | null;
+  host_key_fingerprint: string | null;
+  error_message: string | null;
+  log_text: string;
+};
+
 export const api = {
   listDevices: () => request<ListResponse<Device>>('/api/devices'),
   createDevice: (name: string) =>
@@ -162,5 +177,30 @@ export const api = {
     return request<ListResponse<AuditEvent>>(`/api/audit${q}`);
   },
 
-  getSettings: () => request<Settings>('/api/settings')
+  getSettings: () => request<Settings>('/api/settings'),
+
+  createProvisioningJob: (body: {
+    host: string;
+    ssh_port?: number;
+    ssh_user: string;
+    password?: string;
+    private_key_pem?: string;
+    role: string;
+    node_name?: string;
+    tunnel_cidr_v4?: string;
+    tunnel_cidr_v6?: string;
+  }) =>
+    request<ProvisioningJob>('/api/provisioning', {
+      method: 'POST',
+      body: JSON.stringify(body)
+    }),
+  getProvisioningJob: (id: string) => request<ProvisioningJob>(`/api/provisioning/${id}`),
+  confirmHostKey: (id: string, fingerprint: string) =>
+    request<ProvisioningJob>(`/api/provisioning/${id}/confirm-hostkey`, {
+      method: 'POST',
+      body: JSON.stringify({ fingerprint })
+    }),
+  cancelProvisioningJob: (id: string) =>
+    request<ProvisioningJob>(`/api/provisioning/${id}/cancel`, { method: 'POST' }),
+  listProvisioningJobs: () => request<ListResponse<ProvisioningJob>>('/api/provisioning')
 };

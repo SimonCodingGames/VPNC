@@ -40,12 +40,14 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 x25519-dalek = { workspace = true }
 zeroize = { workspace = true }
-# russh wired in a follow-up commit for full SSH sessions (step 8 acceptance).
 tonic = { workspace = true }
 prost = { workspace = true }
 tokio-stream = { workspace = true }
 futures = { workspace = true }
 async-trait = { workspace = true }
+russh = { workspace = true }
+russh-keys = { workspace = true }
+ssh-key = { workspace = true }
 
 [build-dependencies]
 tonic-build = { workspace = true }

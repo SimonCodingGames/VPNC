@@ -93,7 +93,8 @@ Client-Namespace verbindet mit generiertem Profil und erreicht ein Ziel dahinter
 
 ## Schritt 8 – Node-Provisioning per SSH (Backend)
 **Ziel:** Ein Admin gibt IP und Zugangsdaten ein, der Server wird vollautomatisch
-Teil des Systems.
+Teil des Systems. **Primärpfad** ist das Dashboard (kein SSH-Login durch den
+Admin auf dem Zielserver). Manueller Join-Token/`curl | sh` ist nur Fallback.
 **Anlegen in `crates/vpnc-control/src/provisioning/`:**
 - `jobs.rs`: Job-Queue auf Basis der Tabelle `provisioning_jobs`
   (Zustände: `pending`, `awaiting_hostkey`, `running`, `succeeded`, `failed`,
@@ -153,10 +154,11 @@ Zertifikat wird abgelehnt.
 **Anlegen unter `src/routes/`:**
 - `users`, `devices`,
 - `nodes`: Liste mit Filter nach Region/Rolle/Status (paginiert, für tausende
-  Nodes), Assistent „Server hinzufügen“: Host, Port, Benutzer, Passwort oder
-  SSH-Key, Rollen, Region → Host-Key bestätigen → Preflight-Bericht →
-  Installation mit Live-Log → Node erscheint online. Zusätzlich Tab
-  „Manuell installieren“ mit Einzeiler. Bulk-Hinzufügen per CSV.
+  Nodes). **Primär:** Assistent „Server hinzufügen“: Host/IP, Port, Benutzer,
+  Passwort oder SSH-Key, Rolle → Host-Key im Dashboard bestätigen → Preflight →
+  Installation mit Live-Log (SSE) → Node online — **ohne** dass der Admin sich
+  auf dem Server einloggen muss. **Sekundär:** Tab „Manuell installieren“ mit
+  Join-Token/Einzeiler. Bulk-Hinzufügen per CSV (später).
   Aktionen pro Node: Update, Wartungsmodus (keine neuen Sessions), Entfernen.
 - `regions`: Regionen anlegen und Fallback-Regionen festlegen.
   `profiles` (Erzeugen, einmaliger Download, QR-Code, Widerrufen), `audit`, `settings`.
@@ -222,12 +224,21 @@ und Windows; VPNC-Failover funktioniert im Test.
 ## Schritt 16 – Deployment und Dokumentation
 **Ziel:** Selfhosting in wenigen Minuten.
 **Anlegen:**
-- Multi-Stage-Dockerfiles für control und node in `deploy/docker/`.
-- `docker-compose.yml` (control + Postgres, optional node).
+- Multi-Stage-Dockerfiles für control und node (Root-`Dockerfile` liefert Control
+  + Static-Dashboard + `vpnc-node`-Binaries unter `/app/binaries`).
+- `docker-compose.yml` (lokal) und `docker-compose.coolify.yml` (Traefik, gRPC 50051).
 - systemd-Units in `deploy/systemd/`, Installationsskript für Nodes.
-- `docs/`: Installation, GeoDNS-Einrichtung, Backup/Restore, Update.
+- `docs/`: Installation, Coolify (`deploy-coolify.md`), GeoDNS, Backup/Restore, Update.
+- Auto-Bootstrap (`VPNC_BOOTSTRAP_*`), `VPNC_STATIC_DIR`, JSON-Logs.
 - `tests/load/`: simulierte Nodes (nur gRPC, kein echtes WireGuard), um
   Control mit z. B. 5 000 Nodes und zwei Control-Instanzen zu testen.
-**Akzeptanz:** Frische VM: Anleitung befolgen, Dashboard erreichbar, Node per
-Dashboard hinzugefügt, Profil funktioniert in der offiziellen WireGuard-App.
-Lasttest zeigt stabile Config-Verteilung und Reconnects ohne Lastspitzen.
+**Akzeptanz:** Frische VM/Coolify: Anleitung befolgen, Dashboard erreichbar, Node
+per Dashboard-Assistent hinzugefügt, Profil funktioniert in der offiziellen
+WireGuard-App. Lasttest zeigt stabile Config-Verteilung und Reconnects ohne
+Lastspitzen.
+
+## Classic-Selfhost „fertig“ (Quercheck)
+
+Nicht behaupten, bis: Login → Server per Assistent → Node online → Gerät →
+Profil/QR → WireGuard-App, ohne CLI auf dem Node. Offen bleiben bewusst:
+Cluster/Backbone (12–13), Desktop-Client (14), OpenVPN (9/15), Lasttest.

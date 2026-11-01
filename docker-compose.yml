@@ -25,6 +25,8 @@ services:
       VPNC_COOKIE_SECURE: "false"
       VPNC_TRUST_FORWARDED_HEADERS: "false"
       VPNC_STATIC_DIR: /app/static
+      VPNC_NODE_BINARIES_DIR: /app/binaries
+      VPNC_PUBLIC_GRPC: ${VPNC_PUBLIC_GRPC:-http://host.docker.internal:50051}
       VPNC_BOOTSTRAP_EMAIL: ${VPNC_BOOTSTRAP_EMAIL:-admin@example.com}
       VPNC_BOOTSTRAP_PASSWORD: ${VPNC_BOOTSTRAP_PASSWORD:-dev-password-ok}
       VPNC_TELEMETRY__JSON: "true"

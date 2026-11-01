@@ -7,51 +7,36 @@
 - [x] Schritt 4 – vpnc-control: Benutzer, Geräte, Nodes, Audit
 - [x] Schritt 5 – Classic-WireGuard-Profile
 - [x] Schritt 6 – gRPC: Node-Registrierung und Config-Stream
-- [ ] Schritt 7 – vpnc-node: Rolle `classic` für WireGuard (Struktur + Diff-Tests; Linux-netns offen)
-- [ ] Schritt 8 – Node-Provisioning per SSH (Backend) (Jobs/Preflight/SSH-Fingerprint; russh-Session offen)
+- [ ] Schritt 7 – vpnc-node: Rolle `classic` für WireGuard (Struktur + Diff-Tests; Kernel-Apply/netns offen)
+- [x] Schritt 8 – Node-Provisioning per SSH (Backend: API, russh, Install, Worker, Secrets-Tests)
 - [ ] Schritt 9 – OpenVPN Classic
-- [ ] Schritt 10 – Dashboard: Grundgerüst (Login-Shell vorhanden; Static-Serve durch control offen)
-- [ ] Schritt 11 – Dashboard: Verwaltungsseiten
+- [x] Schritt 10 – Dashboard: Grundgerüst (Login, Static-Serve durch Control, Hell/Dunkel)
+- [x] Schritt 11 – Dashboard: Verwaltungsseiten + Assistent „Server hinzufügen“ (SSH)
 - [ ] Schritt 12 – VPNC-Cluster: Ingress mit Cluster-Key
 - [ ] Schritt 13 – Backbone, Egress-Pool, Peer-Location
 - [ ] Schritt 14 – Client-Core und Desktop-Client
 - [ ] Schritt 15 – OpenVPN im Client (Lizenzprüfung zuerst)
-- [ ] Schritt 16 – Deployment und Dokumentation (Compose/Docker/Docs angelegt; Lasttest offen)
+- [ ] Schritt 16 – Deployment und Dokumentation (Compose/Coolify/Docs/Binary-Store erledigt; Lasttest offen)
+
+## Classic-Selfhost-Checkliste (Ziel)
+
+- [x] Login unter derselben Domain wie `/api`
+- [x] Server-Assistent im Dashboard (IP + SSH → Host-Key → Install)
+- [ ] E2E auf Linux: Job succeeded → Node online (braucht erreichbaren SSH-Host + Binary)
+- [ ] Gerät + WireGuard-Profil → Import in offizielle App (braucht Schritt 7 Kernel-WG)
+- [x] Kein manuelles Einloggen auf dem Node nötig (Primärpfad)
 
 ## Notizen
 
-### Schritt 1
-- `just build` / `just lint` / `just test` lokal grün (MSVC Build Tools bzw. MinGW).
+### Schritt 8
+- `POST /api/provisioning`, Host-Key-Bestätigung, SSE/Polling-Log, Worker, Join-Token, systemd.
+- Secrets nur RAM (`SecretStore`), nie in DB/API.
+- Binary-Store: `VPNC_NODE_BINARIES_DIR` (`linux-amd64/vpnc-node` im Image).
+- SSH-E2E gegen echten Host: auf Linux/Coolify manuell; Unit-Tests für Secrets/Host-Key.
 
-### Schritt 2
-- `vpnc-common`: config, error, telemetry, types, secret inkl. Unit-Tests.
-
-### Schritt 3
-- Auth-Flow (bootstrap/login/me/logout) mit SQLite grün.
-- Postgres-Test wenn `VPNC_TEST_DATABASE_URL` gesetzt (CI-Service vorhanden).
-- Encrypted blobs als base64-TEXT für SQLite+Postgres-Kompatibilität.
-
-### Schritt 4
-- CRUD users/devices/nodes/audit, Join-Tokens, OpenAPI JSON, Auth-Middleware.
-- Test: User sieht keine fremden Geräte; Audit-Einträge; openapi.json valide.
-
-### Schritt 5
-- IPAM (inkl. Exhaustion-Test), WireGuard-Keypairs/.conf/QR-PNG.
-- Profile create/download-once/revoke; Private Key nur im RAM, nicht in DB.
-
-### Schritt 6
-- `proto/node.proto` + `client.proto`, tonic in control+node.
-- Register (Join-Token), Config-Stream, Health, Offline-Markierung.
-- Test `grpc_register` grün. mTLS-Zertifikatsausstellung noch TODO.
-
-### Schritt 7 (teilweise)
-- Module `classic/wireguard.rs` + `nat.rs`, Peer-Diff-Tests, ADR 0007.
-- Kernel/netlink-Apply und netns-Akzeptanz brauchen Linux (hier Windows).
-
-### Schritt 16 (teilweise)
-- Dockerfiles, compose, systemd-Units, Install/Backup/GeoDNS/Update-Docs.
+### Schritt 7 (offen für Tunnel)
+- Node registriert sich; WireGuard-Interface/nft Apply noch nicht produktiv.
 
 ### Blocker / Entscheidungen nötig
-- **Schritt 15:** ADR 0005 – OpenVPN-Client-Lizenz (AGPL / kommerziell / externer Prozess / weglassen).
+- **Schritt 15:** ADR 0005 – OpenVPN-Client-Lizenz.
 - **Schritt 13:** ADR 0006 – gemeinsame Egress-IP erst nach Rückfrage.
-- **Schritt 7/8/9 Akzeptanz:** Linux + Docker/SSH-Testcontainer für netns/SSH-Tests.

@@ -83,11 +83,33 @@ async fn main() -> anyhow::Result<()> {
                     config.static_dir = Some(candidate);
                 }
             }
+            if config.node_binaries_dir.is_none() {
+                let candidate = PathBuf::from("/app/binaries");
+                if candidate.is_dir() {
+                    config.node_binaries_dir = Some(candidate);
+                }
+            }
 
             let runtime = NodeRuntimeState::default();
             let grpc_svc = NodeGrpcService::new(db.clone(), runtime.clone());
             let grpc_addr = bind_addr(&config.grpc_bind);
             let state = build_state(config.clone(), db.clone())?;
+            let binaries_dir = state
+                .config
+                .node_binaries_dir
+                .clone()
+                .unwrap_or_else(|| PathBuf::from("/app/binaries"));
+            let public_grpc = state
+                .config
+                .public_grpc
+                .clone()
+                .unwrap_or_else(|| format!("http://{}", state.config.grpc_bind));
+            vpnc_control::provisioning::spawn_worker(
+                state.provisioning.clone(),
+                state.secret_store.clone(),
+                binaries_dir,
+                public_grpc,
+            );
             let app = build_app(state);
             let http_addr = bind_addr(&config.http_bind);
 
