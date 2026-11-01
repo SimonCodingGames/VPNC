@@ -148,6 +148,10 @@ async fn tick(
         log.line(&format!("warning: could not set tunnel CIDR: {err}"));
     }
 
+    if let Err(err) = apply_public_ip(svc.db(), name.as_deref(), &job.host).await {
+        log.line(&format!("warning: could not set public_ip: {err}"));
+    }
+
     svc.finish(job_id, JobStatus::Succeeded, None).await?;
     log.line("succeeded");
     Ok(())
@@ -264,6 +268,43 @@ async fn apply_cidrs(
             )
             .bind(v4)
             .bind(v6)
+            .bind(&now)
+            .bind(name)
+            .execute(pool)
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+async fn apply_public_ip(db: &Db, name: Option<&str>, host: &str) -> anyhow::Result<()> {
+    let Some(name) = name.filter(|s| !s.is_empty()) else {
+        return Ok(());
+    };
+    let host = host.trim();
+    if host.is_empty() {
+        return Ok(());
+    }
+    // Strip brackets from IPv6 literals; never store a port here.
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    let host = host.split('%').next().unwrap_or(host);
+    let now = Utc::now().to_rfc3339();
+    match db {
+        Db::Sqlite(pool) => {
+            sqlx::query(
+                "UPDATE nodes SET public_ip = COALESCE(public_ip, ?), updated_at = ? WHERE name = ?",
+            )
+            .bind(host)
+            .bind(&now)
+            .bind(name)
+            .execute(pool)
+            .await?;
+        }
+        Db::Postgres(pool) => {
+            sqlx::query(
+                "UPDATE nodes SET public_ip = COALESCE(public_ip, $1), updated_at = $2 WHERE name = $3",
+            )
+            .bind(host)
             .bind(&now)
             .bind(name)
             .execute(pool)

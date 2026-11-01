@@ -158,6 +158,8 @@ export const de = {
     confirmDelete: 'Server wirklich löschen?',
     confirmDeleteText: 'Verbundene Profile funktionieren danach nicht mehr.',
     publicIp: 'Öffentliche IP',
+    publicIpHint: 'IP oder DNS-Name ohne Port (WireGuard-Endpoint :51820)',
+    publicIpSaved: 'Öffentliche IP gespeichert',
     lastSeen: 'Zuletzt gesehen',
     never: 'nie',
     emptyTitle: 'Noch keine Server',

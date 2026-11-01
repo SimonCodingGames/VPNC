@@ -32,6 +32,8 @@
   let loaded = $state(false);
   let error = $state('');
   let busy = $state(false);
+  let editIpId = $state<string | null>(null);
+  let editIpValue = $state('');
 
   // Wizard
   let host = $state('');
@@ -213,6 +215,36 @@
     }
   }
 
+  function startEditIp(n: Node) {
+    editIpId = n.id;
+    editIpValue = n.public_ip ?? '';
+  }
+
+  function cancelEditIp() {
+    editIpId = null;
+    editIpValue = '';
+  }
+
+  async function savePublicIp(n: Node) {
+    const value = editIpValue.trim();
+    if (!value) {
+      error = de.nodes.publicIpHint;
+      return;
+    }
+    busy = true;
+    error = '';
+    try {
+      const updated = await api.updateNode(n.id, { public_ip: value });
+      items = items.map((x) => (x.id === n.id ? updated : x));
+      toast(de.nodes.publicIpSaved);
+      cancelEditIp();
+    } catch (err) {
+      error = err instanceof ApiError ? err.message : de.genericError;
+    } finally {
+      busy = false;
+    }
+  }
+
   async function onToken(e: Event) {
     e.preventDefault();
     busy = true;
@@ -352,9 +384,46 @@
                     </div>
                   </td>
                   <td><Badge tone={roleTone(n.role)}>{n.role}</Badge></td>
-                  <td class="hidden font-mono text-xs text-ink-600 dark:text-ink-300 md:table-cell"
-                    >{n.public_ip ?? '—'}</td
-                  >
+                  <td class="hidden md:table-cell">
+                    {#if editIpId === n.id}
+                      <form
+                        class="flex items-center gap-1"
+                        onsubmit={(e) => {
+                          e.preventDefault();
+                          void savePublicIp(n);
+                        }}
+                      >
+                        <input
+                          class="input font-mono text-xs py-1"
+                          type="text"
+                          bind:value={editIpValue}
+                          placeholder="203.0.113.10"
+                          title={de.nodes.publicIpHint}
+                          disabled={busy}
+                          aria-label={de.nodes.publicIp}
+                        />
+                        <button type="submit" class="btn-icon" disabled={busy} title={de.save}
+                          ><Icon name="check" size={14} /></button
+                        >
+                        <button
+                          type="button"
+                          class="btn-icon"
+                          disabled={busy}
+                          title={de.cancel}
+                          onclick={cancelEditIp}><Icon name="x" size={14} /></button
+                        >
+                      </form>
+                    {:else}
+                      <button
+                        type="button"
+                        class="font-mono text-xs text-ink-600 hover:text-brand-600 dark:text-ink-300 dark:hover:text-brand-400"
+                        title={de.nodes.publicIpHint}
+                        onclick={() => startEditIp(n)}
+                      >
+                        {n.public_ip ?? '—'}
+                      </button>
+                    {/if}
+                  </td>
                   <td><StatusBadge status={n.status} /></td>
                   <td class="hidden whitespace-nowrap text-ink-500 lg:table-cell">
                     {n.last_seen_at ? formatRelative(n.last_seen_at) : de.nodes.never}

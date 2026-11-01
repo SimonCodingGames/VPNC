@@ -18,7 +18,10 @@ use vpnc_common::NodeRole;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/nodes", get(list_nodes).post(create_node))
-        .route("/api/nodes/{id}", get(get_node).delete(delete_node))
+        .route(
+            "/api/nodes/{id}",
+            get(get_node).patch(update_node).delete(delete_node),
+        )
         .route("/api/nodes/join-tokens", post(create_join_token))
 }
 
@@ -36,6 +39,12 @@ struct CreateNodeRequest {
     role: NodeRole,
     tunnel_cidr_v4: Option<String>,
     tunnel_cidr_v6: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateNodeRequest {
+    /// Public WireGuard endpoint host (IP or DNS name), without port.
+    public_ip: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -150,6 +159,73 @@ async fn get_node(
     Path(id): Path<Uuid>,
 ) -> Result<Json<NodeResponse>, ApiError> {
     require_admin(&actor)?;
+    fetch_node(&state.db, id)
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::not_found("node not found"))
+        .map(Json)
+}
+
+async fn update_node(
+    State(state): State<AppState>,
+    Extension(AuthUser(actor)): Extension<AuthUser>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<UpdateNodeRequest>,
+) -> Result<Json<NodeResponse>, ApiError> {
+    require_admin(&actor)?;
+    let Some(public_ip) = body.public_ip.as_ref() else {
+        return Err(ApiError::bad_request("public_ip required"));
+    };
+    let public_ip = public_ip.trim();
+    if public_ip.is_empty() {
+        return Err(ApiError::bad_request("public_ip required"));
+    }
+    if public_ip.contains(|c: char| c.is_whitespace()) || public_ip.contains('/') {
+        return Err(ApiError::bad_request("public_ip must be a host or IP"));
+    }
+    // Reject host:port forms (IPv4 or bracketed IPv6); bare IPv6 with colons is fine.
+    if public_ip
+        .rsplit_once(':')
+        .is_some_and(|(host, port)| !host.is_empty() && port.parse::<u16>().is_ok())
+        && (public_ip.matches('.').count() == 3 || public_ip.starts_with('['))
+    {
+        return Err(ApiError::bad_request(
+            "public_ip must be a host or IP without port",
+        ));
+    }
+    let public_ip = public_ip.trim_start_matches('[').trim_end_matches(']');
+    let now = Utc::now().to_rfc3339();
+    let updated = match &state.db {
+        Db::Sqlite(pool) => sqlx::query("UPDATE nodes SET public_ip = ?, updated_at = ? WHERE id = ?")
+            .bind(public_ip)
+            .bind(&now)
+            .bind(id.to_string())
+            .execute(pool)
+            .await
+            .map(|r| r.rows_affected()),
+        Db::Postgres(pool) => {
+            sqlx::query("UPDATE nodes SET public_ip = $1, updated_at = $2 WHERE id = $3")
+                .bind(public_ip)
+                .bind(&now)
+                .bind(id.to_string())
+                .execute(pool)
+                .await
+                .map(|r| r.rows_affected())
+        }
+    }
+    .map_err(ApiError::internal)?;
+    if updated == 0 {
+        return Err(ApiError::not_found("node not found"));
+    }
+    write_audit(
+        &state.db,
+        Some(actor.id),
+        "node.update",
+        Some("node"),
+        Some(&id.to_string()),
+        None,
+    )
+    .await;
     fetch_node(&state.db, id)
         .await
         .map_err(ApiError::internal)?
